@@ -1,0 +1,120 @@
+// spec.md の「7. データモデル（概念設計）」に対応するPrismaスキーマ
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum Role {
+  admin
+  employee
+}
+
+enum UserStatus {
+  active
+  terminated
+}
+
+enum GrantType {
+  annual_auto
+  special
+}
+
+enum LeaveUnit {
+  full_day
+  am_half
+  pm_half
+}
+
+enum LeaveRequestStatus {
+  pending
+  approved
+  rejected
+  cancelled
+}
+
+/// 7.1 社員（User）
+model User {
+  id               String     @id @default(cuid())
+  name             String
+  email            String     @unique
+  passwordHash     String     @map("password_hash")
+  role             Role
+  hireDate         DateTime   @map("hire_date") @db.Date
+  terminationDate  DateTime?  @map("termination_date") @db.Date
+  status           UserStatus @default(active)
+  createdAt        DateTime   @default(now()) @map("created_at")
+  updatedAt        DateTime   @updatedAt @map("updated_at")
+
+  leaveGrants      LeaveGrant[]
+  leaveRequests    LeaveRequest[]   @relation("RequestsByUser")
+  reviewedRequests LeaveRequest[]   @relation("RequestsReviewedBy")
+
+  @@map("users")
+}
+
+/// 7.2 有給付与履歴（LeaveGrant）
+model LeaveGrant {
+  id                          String    @id @default(cuid())
+  userId                      String    @map("user_id")
+  grantType                   GrantType @default(annual_auto) @map("grant_type")
+  grantedDate                 DateTime  @map("granted_date") @db.Date
+  grantedDays                 Decimal   @map("granted_days") @db.Decimal(4, 1)
+  /// 失効予定日（利用可能な最終日。付与日から2年後の前日）
+  expireDate                  DateTime  @map("expire_date") @db.Date
+  attendanceConfirmedAt       DateTime? @map("attendance_confirmed_at")
+  attendanceConfirmedBy       String?   @map("attendance_confirmed_by")
+  attendanceConfirmedSource   String?   @map("attendance_confirmed_source")
+  createdAt                   DateTime  @default(now()) @map("created_at")
+
+  user         User               @relation(fields: [userId], references: [id])
+  consumptions LeaveConsumption[]
+
+  // grant_type = annual_auto の場合のみ (user_id, granted_date) を一意とする運用ルール。
+  // special は複数件を許容するため、部分ユニーク制約はアプリケーション層／DBマイグレーションで別途付与する。
+  @@index([userId, expireDate])
+  @@map("leave_grants")
+}
+
+/// 7.3 有給申請（LeaveRequest）
+model LeaveRequest {
+  id            String              @id @default(cuid())
+  userId        String              @map("user_id")
+  targetDate    DateTime            @map("target_date") @db.Date
+  unit          LeaveUnit
+  status        LeaveRequestStatus  @default(pending)
+  requestedAt   DateTime            @default(now()) @map("requested_at")
+  reviewedById  String?             @map("reviewed_by")
+  reviewedAt    DateTime?           @map("reviewed_at")
+  rejectReason  String?             @map("reject_reason")
+  cancelledBy   String?             @map("cancelled_by")
+  cancelledAt   DateTime?           @map("cancelled_at")
+  cancelReason  String?             @map("cancel_reason")
+
+  user         User               @relation("RequestsByUser", fields: [userId], references: [id])
+  reviewedBy   User?              @relation("RequestsReviewedBy", fields: [reviewedById], references: [id])
+  consumptions LeaveConsumption[]
+
+  // 同一日・同一区分の重複申請禁止（6章）はアプリケーション層でのバリデーションに加え、
+  // (user_id, target_date, unit) の一意制約を pending/approved のみに適用する部分インデックスを別途検討する。
+  @@index([userId, targetDate])
+  @@map("leave_requests")
+}
+
+/// 7.4 有給消化内訳（LeaveConsumption）
+model LeaveConsumption {
+  id             String    @id @default(cuid())
+  leaveRequestId String    @map("leave_request_id")
+  leaveGrantId   String    @map("leave_grant_id")
+  consumedDays   Decimal   @map("consumed_days") @db.Decimal(4, 1)
+  cancelledAt    DateTime? @map("cancelled_at")
+
+  leaveRequest LeaveRequest @relation(fields: [leaveRequestId], references: [id])
+  leaveGrant   LeaveGrant   @relation(fields: [leaveGrantId], references: [id])
+
+  @@map("leave_consumptions")
+}
