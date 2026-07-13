@@ -81,7 +81,7 @@ erDiagram
 
 インデックス: `@@index([userId, expireDate])`(FEFO消化時の対象付与検索を想定)。
 
-**未実装の制約(コード内コメントより)**: `grant_type = annual_auto` の場合のみ `(user_id, granted_date)` を一意とする運用ルールがあるが、`special` は複数件許容する必要があるため、DBレベルの部分ユニーク制約は未追加(将来のマイグレーションで追加想定)。
+**部分ユニーク制約**: `grant_type = annual_auto` の場合のみ `(user_id, granted_date)` を一意とする制約が、マイグレーション `20260707000000_add_spec_partial_unique_indexes` で追加済み(`special` は複数件許容するため対象外)。
 
 ### `leave_requests`(LeaveRequest。spec.md 7.3)
 
@@ -99,7 +99,7 @@ erDiagram
 
 インデックス: `@@index([userId, targetDate])`(同一日の重複申請チェック、FEFO対象の存在確認用)。
 
-**未実装の制約**: 同一 `(user_id, target_date, unit)` で `pending`/`approved` が重複しないようにする一意制約は、現状アプリケーション層(`checkNewRequest`、トランザクション内の `pg_advisory_xact_lock` による排他)でのみ担保されており、DBの部分インデックスは未追加。
+**部分ユニーク制約**: 同一 `(user_id, target_date, unit)` で `pending`/`approved` が重複しないようにする一意制約が、マイグレーション `20260707000000_add_spec_partial_unique_indexes` で追加済み(`cancelled`/`rejected`等の履歴は対象外で重複を許容)。アプリケーション層(`checkNewRequest`、トランザクション内の `pg_advisory_xact_lock` による排他)と合わせた二重防御。
 
 ### `leave_consumptions`(LeaveConsumption。spec.md 7.4)
 
