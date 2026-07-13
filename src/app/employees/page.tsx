@@ -1,7 +1,12 @@
 import Link from "next/link";
 
 import { requireAdminPage } from "@/lib/auth/guards";
+import { OBLIGATION_STATUS_BADGE_CLASSES, OBLIGATION_STATUS_LABELS } from "@/lib/leave/labels";
 import { getEmployeeSummaries } from "@/lib/leave/queries";
+
+function formatDate(date: Date): string {
+  return date.toISOString().slice(0, 10);
+}
 
 import { AutoGrantPanel } from "./auto-grant-panel";
 import { EmployeeRow } from "./employee-row";
@@ -32,6 +37,7 @@ export default async function EmployeesPage() {
               <th className="px-4 py-3 font-medium">氏名</th>
               <th className="px-4 py-3 font-medium">有給残日数</th>
               <th className="px-4 py-3 font-medium">次回有給付与年月</th>
+              <th className="px-4 py-3 font-medium">年5日取得義務</th>
               <th className="px-4 py-3 font-medium" />
             </tr>
           </thead>
@@ -53,6 +59,25 @@ export default async function EmployeesPage() {
                   {employee.nextGrantYearMonth
                     ? `${employee.nextGrantYearMonth.year}年${employee.nextGrantYearMonth.month}月`
                     : "-"}
+                </td>
+                <td className="px-4 py-3 text-gray-700">
+                  {employee.obligation ? (
+                    <div className="flex flex-col gap-1">
+                      <span
+                        className={`w-fit rounded-full px-2 py-1 text-xs font-medium ${OBLIGATION_STATUS_BADGE_CLASSES[employee.obligation.status]}`}
+                      >
+                        {OBLIGATION_STATUS_LABELS[employee.obligation.status]} 残{employee.obligation.remaining}
+                        日(期限 {formatDate(employee.obligation.deadline)})
+                      </span>
+                      {employee.obligation.otherUnmetCount > 0 && (
+                        <span className="text-xs text-gray-400">
+                          ほか{employee.obligation.otherUnmetCount}件未達
+                        </span>
+                      )}
+                    </div>
+                  ) : (
+                    "-"
+                  )}
                 </td>
                 <td className="px-4 py-3">
                   {employee.hasPendingRequest && (

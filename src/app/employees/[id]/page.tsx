@@ -3,7 +3,13 @@ import { notFound } from "next/navigation";
 
 import { isAdmin, requireSelfOrAdminPage } from "@/lib/auth/guards";
 import { startOfTodayUTC } from "@/lib/date/calendar";
-import { STATUS_BADGE_CLASSES, STATUS_LABELS, UNIT_LABELS } from "@/lib/leave/labels";
+import {
+  OBLIGATION_STATUS_BADGE_CLASSES,
+  OBLIGATION_STATUS_LABELS,
+  STATUS_BADGE_CLASSES,
+  STATUS_LABELS,
+  UNIT_LABELS,
+} from "@/lib/leave/labels";
 import { getEmployeeDetail } from "@/lib/leave/queries";
 import { isWithinWithdrawalWindow } from "@/lib/leave/request-rules";
 
@@ -78,7 +84,7 @@ export default async function EmployeeDetailPage({
         )}
       </div>
 
-      <div className="grid grid-cols-2 gap-4 rounded-lg bg-white p-6 shadow">
+      <div className="grid grid-cols-1 gap-4 rounded-lg bg-white p-6 shadow sm:grid-cols-3">
         <div>
           <p className="text-xs text-gray-500">有給残日数</p>
           <p className="text-2xl font-semibold text-gray-900">{employee.remainingDays}日</p>
@@ -90,6 +96,33 @@ export default async function EmployeeDetailPage({
               ? `${employee.nextGrantYearMonth.year}年${employee.nextGrantYearMonth.month}月`
               : "-"}
           </p>
+        </div>
+        <div>
+          <p className="text-xs text-gray-500">年5日取得義務</p>
+          {employee.obligation.current ? (
+            <div className="space-y-1">
+              <span
+                className={`inline-block rounded-full px-2 py-1 text-xs font-medium ${OBLIGATION_STATUS_BADGE_CLASSES[employee.obligation.current.status.status]}`}
+              >
+                {OBLIGATION_STATUS_LABELS[employee.obligation.current.status.status]}
+              </span>
+              <p className="text-sm text-gray-700">
+                基準日 {formatDate(employee.obligation.current.period.start)} / 期限{" "}
+                {formatDate(employee.obligation.current.status.deadline)}
+              </p>
+              <p className="text-sm text-gray-700">
+                取得済み{employee.obligation.current.status.taken}日 / 取得予定
+                {employee.obligation.current.status.planned}日
+              </p>
+              {employee.obligation.otherUnmetCount > 0 && (
+                <p className="text-xs text-gray-400">
+                  ほか{employee.obligation.otherUnmetCount}件の未達期間があります
+                </p>
+              )}
+            </div>
+          ) : (
+            <p className="text-2xl font-semibold text-gray-900">対象期間外</p>
+          )}
         </div>
       </div>
 

@@ -1,14 +1,100 @@
 import {
+  GrantType,
   LeaveRequestStatus,
   LeaveUnit,
   Role,
   UserStatus,
 } from "@/generated/prisma/client";
-import { startOfTodayUTC } from "@/lib/date/calendar";
+import { startOfTodayUTC, toUtcMidnight } from "@/lib/date/calendar";
 import { decimalToNumber as toNumber } from "@/lib/decimal";
+import {
+  computeObligationStatus,
+  getObligationPeriods,
+  type ObligationPeriod,
+  type ObligationPeriodStatus,
+  type ObligationStatusLevel,
+  selectPriorityObligation,
+} from "@/lib/leave/annual-obligation";
 import { type GrantBalanceInput, sumRemaining } from "@/lib/leave/balance";
+import { unitToDays } from "@/lib/leave/request-rules";
 import { getNextGrantYearMonth, planAutoGrants, SYSTEM_LAUNCH_DATE } from "@/lib/leave/schedule";
 import { prisma } from "@/lib/prisma";
+
+export interface AnnualObligation {
+  current: ObligationPeriodStatus | null;
+  /** current以外にmet以外(未達)の期間がいくつあるか */
+  otherUnmetCount: number;
+}
+
+/**
+ * 義務期間ごとにapproved申請を集計してステータスを計算し、表示対象の1件(current)を選ぶ。
+ * getAnnualObligation・getEmployeeSummaries の両方から使う共通ロジック。
+ */
+function buildAnnualObligation(
+  periods: ObligationPeriod[],
+  requests: { targetDate: Date; unit: LeaveUnit }[],
+  asOf: Date,
+): AnnualObligation {
+  if (periods.length === 0) {
+    return { current: null, otherUnmetCount: 0 };
+  }
+
+  const normalizedAsOf = toUtcMidnight(asOf);
+  const periodStatuses: ObligationPeriodStatus[] = periods.map((period) => {
+    let taken = 0;
+    let planned = 0;
+    for (const request of requests) {
+      const time = request.targetDate.getTime();
+      if (time < period.start.getTime() || time > period.end.getTime()) {
+        continue;
+      }
+      if (time <= normalizedAsOf.getTime()) {
+        taken += unitToDays(request.unit);
+      } else {
+        planned += unitToDays(request.unit);
+      }
+    }
+    return { period, status: computeObligationStatus(taken, planned, period, asOf) };
+  });
+
+  const current = selectPriorityObligation(periodStatuses);
+  const otherUnmetCount = periodStatuses.filter(
+    (ps) => ps !== current && ps.status.status !== "met",
+  ).length;
+
+  return { current, otherUnmetCount };
+}
+
+/** 社員一覧・詳細画面用。義務期間が無い(義務対象外)社員はnull */
+export async function getAnnualObligation(
+  userId: string,
+  asOf: Date = startOfTodayUTC(),
+): Promise<AnnualObligation> {
+  const grants = await prisma.leaveGrant.findMany({
+    where: { userId, grantType: GrantType.annual_auto, grantedDays: { gte: 10 } },
+    select: { grantedDate: true, grantedDays: true },
+  });
+  const periods = getObligationPeriods(
+    grants.map((grant) => ({ grantedDate: grant.grantedDate, grantedDays: toNumber(grant.grantedDays) })),
+    asOf,
+  );
+  if (periods.length === 0) {
+    return { current: null, otherUnmetCount: 0 };
+  }
+
+  const minStart = periods[0].start;
+  const maxEnd = periods.reduce(
+    (max, period) => (period.end.getTime() > max.getTime() ? period.end : max),
+    periods[0].end,
+  );
+
+  const requests = await prisma.leaveRequest.findMany({
+    where: { userId, status: LeaveRequestStatus.approved, targetDate: { gte: minStart, lte: maxEnd } },
+    select: { targetDate: true, unit: true },
+  });
+
+  return buildAnnualObligation(periods, requests, asOf);
+}
 
 export async function getActiveGrantsWithRemaining(
   userId: string,
@@ -60,6 +146,14 @@ export async function hasAnyGrant(userId: string): Promise<boolean> {
   return count > 0;
 }
 
+export interface EmployeeObligationSummary {
+  start: Date;
+  remaining: number;
+  deadline: Date;
+  status: ObligationStatusLevel;
+  otherUnmetCount: number;
+}
+
 export interface EmployeeSummary {
   id: string;
   name: string;
@@ -68,16 +162,21 @@ export interface EmployeeSummary {
   remainingDays: number;
   nextGrantYearMonth: { year: number; month: number } | null;
   hasPendingRequest: boolean;
+  obligation: EmployeeObligationSummary | null;
 }
 
-/** 社員一覧画面(4.2)用。3クエリでN+1を回避してメモリ上に集計する */
+/**
+ * 社員一覧画面(4.2)用。users/grants/pendingRequests/obligationGrantsを並列取得し、
+ * 義務期間をメモリで算出したうえでobligationRequestsを絞り込んで取得することで、
+ * N+1回避と不要な全件取得の両方を避ける。
+ */
 export async function getEmployeeSummaries(): Promise<EmployeeSummary[]> {
   const asOf = startOfTodayUTC();
 
   const users = await prisma.user.findMany({ orderBy: { hireDate: "asc" } });
   const userIds = users.map((user) => user.id);
 
-  const [grants, pendingRequests] = await Promise.all([
+  const [grants, pendingRequests, obligationGrants] = await Promise.all([
     prisma.leaveGrant.findMany({
       where: { userId: { in: userIds }, grantedDate: { lte: asOf }, expireDate: { gte: asOf } },
       include: {
@@ -88,6 +187,10 @@ export async function getEmployeeSummaries(): Promise<EmployeeSummary[]> {
       where: { userId: { in: userIds }, status: LeaveRequestStatus.pending },
       select: { userId: true },
       distinct: ["userId"],
+    }),
+    prisma.leaveGrant.findMany({
+      where: { userId: { in: userIds }, grantType: GrantType.annual_auto, grantedDays: { gte: 10 } },
+      select: { userId: true, grantedDate: true, grantedDays: true },
     }),
   ]);
 
@@ -103,16 +206,85 @@ export async function getEmployeeSummaries(): Promise<EmployeeSummary[]> {
 
   const pendingUserIds = new Set(pendingRequests.map((request) => request.userId));
 
-  return users.map((user) => ({
-    id: user.id,
-    name: user.name,
-    role: user.role,
-    status: user.status,
-    remainingDays: remainingByUser.get(user.id) ?? 0,
-    nextGrantYearMonth:
-      user.status === UserStatus.active ? getNextGrantYearMonth(user.hireDate, asOf) : null,
-    hasPendingRequest: pendingUserIds.has(user.id),
-  }));
+  // 義務期間をユーザーごとにメモリで先に計算し、全ユーザーのmin(start)〜max(end)の
+  // 範囲だけLeaveRequestを取得する(全期間を無条件に取得しない)。
+  const obligationGrantsByUser = new Map<string, { grantedDate: Date; grantedDays: number }[]>();
+  for (const grant of obligationGrants) {
+    const list = obligationGrantsByUser.get(grant.userId) ?? [];
+    list.push({ grantedDate: grant.grantedDate, grantedDays: toNumber(grant.grantedDays) });
+    obligationGrantsByUser.set(grant.userId, list);
+  }
+
+  const periodsByUser = new Map<string, ObligationPeriod[]>();
+  let globalMinStart: Date | null = null;
+  let globalMaxEnd: Date | null = null;
+  for (const [userId, userGrants] of obligationGrantsByUser) {
+    const periods = getObligationPeriods(userGrants, asOf);
+    if (periods.length === 0) {
+      continue;
+    }
+    periodsByUser.set(userId, periods);
+    for (const period of periods) {
+      if (!globalMinStart || period.start.getTime() < globalMinStart.getTime()) {
+        globalMinStart = period.start;
+      }
+      if (!globalMaxEnd || period.end.getTime() > globalMaxEnd.getTime()) {
+        globalMaxEnd = period.end;
+      }
+    }
+  }
+
+  const obligationRequests =
+    globalMinStart && globalMaxEnd
+      ? await prisma.leaveRequest.findMany({
+          where: {
+            userId: { in: Array.from(periodsByUser.keys()) },
+            status: LeaveRequestStatus.approved,
+            targetDate: { gte: globalMinStart, lte: globalMaxEnd },
+          },
+          select: { userId: true, targetDate: true, unit: true },
+        })
+      : [];
+
+  const obligationRequestsByUser = new Map<string, { targetDate: Date; unit: LeaveUnit }[]>();
+  for (const request of obligationRequests) {
+    const list = obligationRequestsByUser.get(request.userId) ?? [];
+    list.push({ targetDate: request.targetDate, unit: request.unit });
+    obligationRequestsByUser.set(request.userId, list);
+  }
+
+  const obligationByUser = new Map<string, AnnualObligation>();
+  for (const [userId, periods] of periodsByUser) {
+    obligationByUser.set(
+      userId,
+      buildAnnualObligation(periods, obligationRequestsByUser.get(userId) ?? [], asOf),
+    );
+  }
+
+  return users.map((user) => {
+    const obligation = obligationByUser.get(user.id);
+    const current = obligation?.current;
+    return {
+      id: user.id,
+      name: user.name,
+      role: user.role,
+      status: user.status,
+      remainingDays: remainingByUser.get(user.id) ?? 0,
+      nextGrantYearMonth:
+        user.status === UserStatus.active ? getNextGrantYearMonth(user.hireDate, asOf) : null,
+      hasPendingRequest: pendingUserIds.has(user.id),
+      obligation:
+        obligation && current
+          ? {
+              start: current.period.start,
+              remaining: current.status.remaining,
+              deadline: current.status.deadline,
+              status: current.status.status,
+              otherUnmetCount: obligation.otherUnmetCount,
+            }
+          : null,
+    };
+  });
 }
 
 export interface AutoGrantPreviewItem {
@@ -199,6 +371,7 @@ export interface EmployeeDetail {
   terminationDate: Date | null;
   remainingDays: number;
   nextGrantYearMonth: { year: number; month: number } | null;
+  obligation: AnnualObligation;
   grants: GrantHistoryItem[];
   requests: RequestHistoryItem[];
 }
@@ -211,7 +384,7 @@ export async function getEmployeeDetail(userId: string): Promise<EmployeeDetail 
     return null;
   }
 
-  const [activeGrants, grants, requests] = await Promise.all([
+  const [activeGrants, grants, requests, obligation] = await Promise.all([
     getActiveGrantsWithRemaining(userId, asOf),
     prisma.leaveGrant.findMany({
       where: { userId },
@@ -222,6 +395,7 @@ export async function getEmployeeDetail(userId: string): Promise<EmployeeDetail 
       orderBy: { targetDate: "desc" },
       include: { reviewedBy: { select: { name: true } } },
     }),
+    getAnnualObligation(userId, asOf),
   ]);
 
   return {
@@ -235,6 +409,7 @@ export async function getEmployeeDetail(userId: string): Promise<EmployeeDetail 
     remainingDays: sumRemaining(activeGrants),
     nextGrantYearMonth:
       user.status === UserStatus.active ? getNextGrantYearMonth(user.hireDate, asOf) : null,
+    obligation,
     grants: grants.map((grant) => ({
       id: grant.id,
       grantedDate: grant.grantedDate,

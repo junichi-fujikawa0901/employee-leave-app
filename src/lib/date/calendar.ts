@@ -1,4 +1,4 @@
-function toUtcMidnight(date: Date): Date {
+export function toUtcMidnight(date: Date): Date {
   return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
 }
 
