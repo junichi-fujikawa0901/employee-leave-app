@@ -3,15 +3,15 @@ import bcrypt from "bcryptjs";
 import type { LeaveUnit, Role, User } from "../src/generated/prisma/client";
 import { type GrantBalanceInput, isGrantActive, planFefoConsumption } from "../src/lib/leave/balance";
 import { unitToDays } from "../src/lib/leave/request-rules";
-import { computeExpireDate, getNextGrantMilestone } from "../src/lib/leave/schedule";
+import { computeExpireDate, planAutoGrants, SYSTEM_LAUNCH_DATE } from "../src/lib/leave/schedule";
 import { prisma } from "../src/lib/prisma";
 
 /**
  * このseedデータは「本システムは2024-01-01から運用を開始した」という前提で設計する。
  * 入社日(hire_date)はシステム運用開始より前でもよいが、LeaveGrant/LeaveRequestなど
  * システムが記録した実績データはこの日付以降にのみ存在するものとして生成する。
+ * SYSTEM_LAUNCH_DATEはschedule.tsの定数と共有する。
  */
-const SYSTEM_LAUNCH_DATE = utcDate(2024, 1, 1);
 
 function utcDate(year: number, month: number, day: number): Date {
   return new Date(Date.UTC(year, month - 1, day));
@@ -67,24 +67,6 @@ async function resetLeaveData(userId: string, seedFn: () => Promise<void>): Prom
   await seedFn();
 }
 
-/** spec.md 5.1のスケジュールに沿って、SYSTEM_LAUNCH_DATE以降・throughDate以前に発生する付与だけを列挙する */
-function listAutoGrantsSinceLaunch(
-  hireDate: Date,
-  throughDate: Date,
-): { grantedDate: Date; grantedDays: number }[] {
-  const grants: { grantedDate: Date; grantedDays: number }[] = [];
-  let cursor = SYSTEM_LAUNCH_DATE;
-  for (let i = 0; i < 100; i += 1) {
-    const milestone = getNextGrantMilestone(hireDate, cursor);
-    if (!milestone || milestone.baseDate.getTime() > throughDate.getTime()) {
-      break;
-    }
-    grants.push({ grantedDate: milestone.baseDate, grantedDays: milestone.grantedDays });
-    cursor = new Date(milestone.baseDate.getTime() + 24 * 60 * 60 * 1000);
-  }
-  return grants;
-}
-
 interface LedgerGrant {
   id: string;
   grantedDate: Date;
@@ -102,14 +84,18 @@ interface LedgerGrant {
  * 有給付与が発生しないため)を渡す。
  */
 async function createAutoGrantLedger(userId: string, hireDate: Date, throughDate: Date) {
-  const schedule = listAutoGrantsSinceLaunch(hireDate, throughDate);
+  const schedule = planAutoGrants(hireDate, throughDate, SYSTEM_LAUNCH_DATE);
   const grants: LedgerGrant[] = [];
   for (const item of schedule) {
-    const expireDate = computeExpireDate(item.grantedDate);
     const grant = await prisma.leaveGrant.create({
-      data: { userId, grantedDate: item.grantedDate, grantedDays: item.grantedDays, expireDate },
+      data: {
+        userId,
+        grantedDate: item.grantedDate,
+        grantedDays: item.grantedDays,
+        expireDate: item.expireDate,
+      },
     });
-    grants.push({ id: grant.id, grantedDate: item.grantedDate, expireDate, remaining: item.grantedDays });
+    grants.push({ id: grant.id, grantedDate: item.grantedDate, expireDate: item.expireDate, remaining: item.grantedDays });
   }
 
   return {

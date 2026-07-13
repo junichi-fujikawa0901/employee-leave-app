@@ -23,5 +23,6 @@ export default auth((req) => {
 });
 
 export const config = {
-  matcher: ["/((?!api/auth|_next/static|_next/image|favicon.ico).*)"],
+  // api/cron/* はセッション認証ではなくCRON_SECRETでRoute Handler内で認証するため対象外にする
+  matcher: ["/((?!api/auth|api/cron/|_next/static|_next/image|favicon.ico).*)"],
 };

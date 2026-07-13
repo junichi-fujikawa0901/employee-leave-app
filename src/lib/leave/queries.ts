@@ -7,7 +7,7 @@ import {
 import { startOfTodayUTC } from "@/lib/date/calendar";
 import { decimalToNumber as toNumber } from "@/lib/decimal";
 import { type GrantBalanceInput, sumRemaining } from "@/lib/leave/balance";
-import { getNextGrantYearMonth } from "@/lib/leave/schedule";
+import { getNextGrantYearMonth, planAutoGrants, SYSTEM_LAUNCH_DATE } from "@/lib/leave/schedule";
 import { prisma } from "@/lib/prisma";
 
 export async function getActiveGrantsWithRemaining(
@@ -113,6 +113,58 @@ export async function getEmployeeSummaries(): Promise<EmployeeSummary[]> {
       user.status === UserStatus.active ? getNextGrantYearMonth(user.hireDate, asOf) : null,
     hasPendingRequest: pendingUserIds.has(user.id),
   }));
+}
+
+export interface AutoGrantPreviewItem {
+  userId: string;
+  userName: string;
+  grants: { grantedDate: Date; grantedDays: number; expireDate: Date }[];
+}
+
+export interface AutoGrantPreview {
+  asOf: Date;
+  items: AutoGrantPreviewItem[];
+  totalCount: number;
+}
+
+/**
+ * runAutoGrantsForAllActiveUsers を実行した場合に何が生成されるかを、
+ * DBへの書き込みなしで事前計算する(社員一覧の「付与を実行」プレビュー用)。
+ */
+export async function previewAutoGrants(
+  asOf: Date = startOfTodayUTC(),
+): Promise<AutoGrantPreview> {
+  const activeUsers = await prisma.user.findMany({
+    where: { status: UserStatus.active },
+    select: { id: true, name: true, hireDate: true },
+    orderBy: { hireDate: "asc" },
+  });
+  const userIds = activeUsers.map((user) => user.id);
+
+  const existingGrants = await prisma.leaveGrant.findMany({
+    where: { userId: { in: userIds }, grantType: "annual_auto" },
+    select: { userId: true, grantedDate: true },
+  });
+  const existingKeys = new Set(
+    existingGrants.map((grant) => `${grant.userId}:${grant.grantedDate.getTime()}`),
+  );
+
+  const items: AutoGrantPreviewItem[] = [];
+  for (const user of activeUsers) {
+    const planned = planAutoGrants(user.hireDate, asOf, SYSTEM_LAUNCH_DATE);
+    const newOnes = planned.filter(
+      (grant) => !existingKeys.has(`${user.id}:${grant.grantedDate.getTime()}`),
+    );
+    if (newOnes.length > 0) {
+      items.push({ userId: user.id, userName: user.name, grants: newOnes });
+    }
+  }
+
+  return {
+    asOf,
+    items,
+    totalCount: items.reduce((sum, item) => sum + item.grants.length, 0),
+  };
 }
 
 export interface GrantHistoryItem {

@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { getNextGrantMilestone, getNextGrantYearMonth, computeExpireDate } from "@/lib/leave/schedule";
+import {
+  getNextGrantMilestone,
+  getNextGrantYearMonth,
+  computeExpireDate,
+  planAutoGrants,
+} from "@/lib/leave/schedule";
 
 const utc = (y: number, m: number, d: number) => new Date(Date.UTC(y, m - 1, d));
 
@@ -59,5 +64,39 @@ describe("computeExpireDate", () => {
 
   it("うるう年2/29付与の場合、Dateの月末正規化により3/1の前日=2/28になる(現行実装の挙動を固定する回帰テスト)", () => {
     expect(computeExpireDate(utc(2024, 2, 29))).toEqual(utc(2026, 2, 28));
+  });
+});
+
+describe("planAutoGrants", () => {
+  const launch = utc(2024, 1, 1);
+
+  it("入社直後(asOf=launch)は空配列を返す(6ヶ月未達)", () => {
+    const result = planAutoGrants(launch, launch, launch);
+    expect(result).toEqual([]);
+  });
+
+  it("ちょうど6ヶ月経過すると1件返り、expireDateはcomputeExpireDateと一致する", () => {
+    const result = planAutoGrants(launch, utc(2024, 7, 1), launch);
+    expect(result).toEqual([
+      { grantedDate: utc(2024, 7, 1), grantedDays: 10, expireDate: utc(2026, 6, 30) },
+    ]);
+  });
+
+  it("hireDateが稼働開始日より前でも、稼働開始前の理論上のマイルストーンは除外される", () => {
+    // hireDate=2020-01-01の理論上のマイルストーン(2020-07-01/2021-07-01/2022-07-01/2023-07-01)は
+    // すべてlaunch(2024-01-01)より前なので除外され、稼働開始後最初に到来する
+    // 2024-07-01(54ヶ月時点・16日)のみが返る
+    const result = planAutoGrants(utc(2020, 1, 1), utc(2024, 7, 1), launch);
+    expect(result).toEqual([
+      { grantedDate: utc(2024, 7, 1), grantedDays: 16, expireDate: utc(2026, 6, 30) },
+    ]);
+  });
+
+  it("複数マイルストーンを跨いだ場合は日付昇順で複数件返る", () => {
+    const result = planAutoGrants(launch, utc(2026, 1, 1), launch);
+    expect(result).toEqual([
+      { grantedDate: utc(2024, 7, 1), grantedDays: 10, expireDate: utc(2026, 6, 30) },
+      { grantedDate: utc(2025, 7, 1), grantedDays: 11, expireDate: utc(2027, 6, 30) },
+    ]);
   });
 });

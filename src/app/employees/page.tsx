@@ -3,6 +3,7 @@ import Link from "next/link";
 import { requireAdminPage } from "@/lib/auth/guards";
 import { getEmployeeSummaries } from "@/lib/leave/queries";
 
+import { AutoGrantPanel } from "./auto-grant-panel";
 import { EmployeeRow } from "./employee-row";
 
 /** spec.md 4.2: 社員一覧画面(管理者専用) */
@@ -21,6 +22,8 @@ export default async function EmployeesPage() {
           社員を新規登録
         </Link>
       </div>
+
+      <AutoGrantPanel />
 
       <div className="overflow-hidden rounded-lg bg-white shadow">
         <table className="w-full text-left text-sm">

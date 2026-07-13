@@ -12,6 +12,13 @@ const FIXED_MILESTONES: { monthsOffset: number; grantedDays: number }[] = [
 const CONTINUING_GRANTED_DAYS = 20;
 const CONTINUING_INTERVAL_MONTHS = 12;
 const MAX_MILESTONE_LOOKUPS = 1000;
+const MAX_AUTO_GRANT_ITERATIONS = 100;
+
+/**
+ * システム運用開始日。稼働開始より前の履歴はシステムに存在しないものとして扱う
+ * （CLAUDE.md参照）。自動付与の起点として全体で共有する。
+ */
+export const SYSTEM_LAUNCH_DATE = new Date(Date.UTC(2024, 0, 1));
 
 export interface GrantMilestone {
   baseDate: Date;
@@ -55,4 +62,36 @@ export function getNextGrantYearMonth(
 /** spec.md 5.2: expire_date は「利用可能な最終日」＝付与日から2年後の前日 */
 export function computeExpireDate(grantedDate: Date): Date {
   return addDaysUTC(addYearsUTC(grantedDate, 2), -1);
+}
+
+export interface PlannedAutoGrant {
+  grantedDate: Date;
+  grantedDays: number;
+  expireDate: Date;
+}
+
+/**
+ * hireDate起算の法定付与スケジュールのうち、systemLaunchDate以降〜asOf以前に
+ * 到来したマイルストーン(annual_auto)をすべて列挙する。DBに依存しない純粋関数。
+ */
+export function planAutoGrants(
+  hireDate: Date,
+  asOf: Date,
+  systemLaunchDate: Date,
+): PlannedAutoGrant[] {
+  const grants: PlannedAutoGrant[] = [];
+  let cursor = systemLaunchDate;
+  for (let i = 0; i < MAX_AUTO_GRANT_ITERATIONS; i += 1) {
+    const milestone = getNextGrantMilestone(hireDate, cursor);
+    if (!milestone || milestone.baseDate.getTime() > asOf.getTime()) {
+      break;
+    }
+    grants.push({
+      grantedDate: milestone.baseDate,
+      grantedDays: milestone.grantedDays,
+      expireDate: computeExpireDate(milestone.baseDate),
+    });
+    cursor = addDaysUTC(milestone.baseDate, 1);
+  }
+  return grants;
 }

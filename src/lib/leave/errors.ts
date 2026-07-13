@@ -47,3 +47,15 @@ export class WithdrawalDeadlinePassedError extends DomainError {
     super("取得日の3日前を過ぎているため取り下げできません");
   }
 }
+
+export class GrantTargetNotFoundError extends DomainError {
+  constructor() {
+    super("対象の社員が見つかりません");
+  }
+}
+
+export class GrantTargetNotActiveError extends DomainError {
+  constructor() {
+    super("退職済みの社員には自動付与を実行できません");
+  }
+}
