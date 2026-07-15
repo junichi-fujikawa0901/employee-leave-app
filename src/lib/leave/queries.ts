@@ -5,7 +5,7 @@ import {
   Role,
   UserStatus,
 } from "@/generated/prisma/client";
-import { startOfTodayUTC, toUtcMidnight } from "@/lib/date/calendar";
+import { addDaysUTC, startOfTodayUTC, toUtcMidnight } from "@/lib/date/calendar";
 import { decimalToNumber as toNumber } from "@/lib/decimal";
 import {
   computeObligationStatus,
@@ -374,6 +374,134 @@ export interface EmployeeDetail {
   obligation: AnnualObligation;
   grants: GrantHistoryItem[];
   requests: RequestHistoryItem[];
+}
+
+/**
+ * asOf時点の残日数を、その時点で「承認済みだった」消化明細だけを差し引いて算出する
+ * (Phase 3管理簿専用。既存の残日数概念=承認時点で即時消化、spec.md 6章と一致させるため
+ * targetDateではなくreviewedAtで消化明細を絞り込む。getActiveGrantsWithRemainingは
+ * 消化明細をcancelledAtでしか絞らないため、過去時点の残高再現には使えない)。
+ *
+ * asOfは日付(UTC0時)として扱うため、reviewedAtは「asOfの翌日0時より前」で絞り込む
+ * (asOf当日中の承認を含めるため。reviewedAt <= asOfのような単純な比較だと、
+ * asOfの0時ちょうど以外の時刻に承認された当日分がすべて漏れてしまう)。
+ */
+async function getRemainingDaysAsOf(userId: string, asOf: Date): Promise<number> {
+  const normalizedAsOf = toUtcMidnight(asOf);
+  const endOfAsOfDay = addDaysUTC(normalizedAsOf, 1);
+  const grants = await prisma.leaveGrant.findMany({
+    where: { userId, grantedDate: { lte: normalizedAsOf }, expireDate: { gte: normalizedAsOf } },
+    include: {
+      consumptions: {
+        where: { cancelledAt: null, leaveRequest: { reviewedAt: { lt: endOfAsOfDay } } },
+        select: { consumedDays: true },
+      },
+    },
+  });
+  return grants.reduce((total, grant) => {
+    const consumedTotal = grant.consumptions.reduce(
+      (sum, consumption) => sum + toNumber(consumption.consumedDays),
+      0,
+    );
+    return total + (toNumber(grant.grantedDays) - consumedTotal);
+  }, 0);
+}
+
+export interface LeaveLedgerEntry {
+  targetDate: Date;
+  unit: LeaveUnit;
+  consumedDays: number;
+  isFuture: boolean;
+  isOverlap: boolean;
+}
+
+export interface LeaveLedgerPeriod {
+  start: Date;
+  end: Date;
+  baseGrantDays: number;
+  entries: LeaveLedgerEntry[];
+  takenDays: number;
+  plannedDays: number;
+  balanceAsOf: Date;
+  remainingDays: number;
+}
+
+/**
+ * 年次有給休暇管理簿(Phase 3)用。義務期間(Phase 2のObligationPeriod)ごとに、
+ * 承認済み取得明細と期末残日数をまとめて返す。義務対象期間が無い社員は[]。
+ */
+export async function getLeaveLedger(
+  userId: string,
+  asOf: Date = startOfTodayUTC(),
+): Promise<LeaveLedgerPeriod[]> {
+  const grants = await prisma.leaveGrant.findMany({
+    where: { userId, grantType: GrantType.annual_auto, grantedDays: { gte: 10 } },
+    select: { grantedDate: true, grantedDays: true },
+  });
+  const periods = getObligationPeriods(
+    grants.map((grant) => ({ grantedDate: grant.grantedDate, grantedDays: toNumber(grant.grantedDays) })),
+    asOf,
+  );
+  if (periods.length === 0) {
+    return [];
+  }
+
+  const minStart = periods[0].start;
+  const maxEnd = periods.reduce(
+    (max, period) => (period.end.getTime() > max.getTime() ? period.end : max),
+    periods[0].end,
+  );
+
+  const requests = await prisma.leaveRequest.findMany({
+    where: { userId, status: LeaveRequestStatus.approved, targetDate: { gte: minStart, lte: maxEnd } },
+    select: { targetDate: true, unit: true },
+    orderBy: { targetDate: "asc" },
+  });
+
+  const normalizedAsOf = toUtcMidnight(asOf);
+
+  return Promise.all(
+    periods.map(async (period) => {
+      const entries: LeaveLedgerEntry[] = [];
+      let takenDays = 0;
+      let plannedDays = 0;
+
+      for (const request of requests) {
+        const time = request.targetDate.getTime();
+        if (time < period.start.getTime() || time > period.end.getTime()) {
+          continue;
+        }
+        const days = unitToDays(request.unit);
+        const isFuture = time > normalizedAsOf.getTime();
+        if (isFuture) {
+          plannedDays += days;
+        } else {
+          takenDays += days;
+        }
+        const isOverlap = periods.some(
+          (other) =>
+            other !== period &&
+            time >= other.start.getTime() &&
+            time <= other.end.getTime(),
+        );
+        entries.push({ targetDate: request.targetDate, unit: request.unit, consumedDays: days, isFuture, isOverlap });
+      }
+
+      const balanceAsOf = period.end.getTime() < normalizedAsOf.getTime() ? period.end : normalizedAsOf;
+      const remainingDays = await getRemainingDaysAsOf(userId, balanceAsOf);
+
+      return {
+        start: period.start,
+        end: period.end,
+        baseGrantDays: period.baseGrantDays,
+        entries,
+        takenDays,
+        plannedDays,
+        balanceAsOf,
+        remainingDays,
+      };
+    }),
+  );
 }
 
 /** 社員詳細画面(4.3)用 */

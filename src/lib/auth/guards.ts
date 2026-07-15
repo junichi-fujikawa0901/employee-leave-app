@@ -2,7 +2,7 @@ import { notFound, redirect } from "next/navigation";
 import type { Session } from "next-auth";
 
 import { auth } from "@/auth";
-import { UserStatus } from "@/generated/prisma/client";
+import { Role, UserStatus } from "@/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
 
 /** spec.md 8章: すべてのページ/Server Actionで個別に認可チェックを行うための共通ガード */
@@ -73,4 +73,41 @@ export function assertAdminForAction(session: Session): void {
   if (!isAdmin(session)) {
     throw new ActionError("この操作を行う権限がありません");
   }
+}
+
+/** Route Handler内で発生した認証・認可エラーを表す。呼び出し側でcatchしHTTPステータス付きレスポンスに変換する */
+export class RouteAuthError extends Error {
+  constructor(
+    public readonly status: number,
+    message: string,
+  ) {
+    super(message);
+  }
+}
+
+/**
+ * Route Handler専用の管理者認可ガード。ファイル出力APIなどセッション発行後の
+ * 降格・退職を確実に弾く必要がある箇所向けに、status・roleの両方をDBの最新値で判定する
+ * (ページ/Server Action用の既存ガードはstatusのみDB確認しroleはセッション値を使うため、
+ * このガードはそれらと役割が異なる)。
+ *
+ * 戻り値のsession.user.roleは判定に使用済みの古い値であり、呼び出し側が
+ * これを認可判断に再利用してはならない(判定は本関数内で完結させること)。
+ */
+export async function requireAdminForRoute(): Promise<Session> {
+  const session = await auth();
+  if (!session?.user) {
+    throw new RouteAuthError(401, "認証されていません");
+  }
+  const user = await prisma.user.findUnique({
+    where: { id: session.user.id },
+    select: { status: true, role: true },
+  });
+  if (!user || user.status !== UserStatus.active) {
+    throw new RouteAuthError(401, "このアカウントは無効化されています");
+  }
+  if (user.role !== Role.admin) {
+    throw new RouteAuthError(403, "この操作を行う権限がありません");
+  }
+  return session;
 }

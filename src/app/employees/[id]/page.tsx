@@ -75,12 +75,20 @@ export default async function EmployeeDetailPage({
           <p className="text-sm text-gray-500">入社日: {formatDate(employee.hireDate)}</p>
         </div>
         {viewerIsAdmin && (
-          <Link
-            href={`/employees/${employee.id}/edit`}
-            className="rounded border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700"
-          >
-            社員情報を編集・退職処理
-          </Link>
+          <div className="flex gap-2">
+            <a
+              href={`/api/employees/${employee.id}/leave-ledger`}
+              className="rounded border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700"
+            >
+              年次有給休暇管理簿を出力(Excel)
+            </a>
+            <Link
+              href={`/employees/${employee.id}/edit`}
+              className="rounded border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700"
+            >
+              社員情報を編集・退職処理
+            </Link>
+          </div>
         )}
       </div>
 
