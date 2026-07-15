@@ -1,14 +1,28 @@
 import { describe, it, expect, afterEach } from "vitest";
 
+import { InsufficientBalanceError } from "@/lib/leave/balance";
 import { decimalToNumber } from "@/lib/decimal";
 import {
+  BatchRequestConflictError,
+  DuplicateDatesInBatchError,
   DuplicateRequestError,
+  EmptyBatchDatesError,
+  ExceedsBatchSizeLimitError,
   ExceedsDailyLimitError,
   ExceedsHourlyAnnualCapError,
   HourlyLeaveOutsideObligationPeriodError,
   InvalidHourlyRequestError,
+  NotRequestOwnerError,
+  RequestTargetNotActiveError,
 } from "@/lib/leave/errors";
-import { approveLeaveRequest, createLeaveRequest } from "@/lib/leave/mutations";
+import {
+  approveLeaveRequest,
+  approveLeaveRequestBatch,
+  cancelLeaveRequestBatch,
+  createLeaveRequest,
+  createLeaveRequestBatch,
+  rejectLeaveRequestBatch,
+} from "@/lib/leave/mutations";
 import { computeExpireDate } from "@/lib/leave/schedule";
 import { prisma } from "@/lib/prisma";
 
@@ -16,7 +30,10 @@ const utc = (y: number, m: number, d: number) => new Date(Date.UTC(y, m - 1, d))
 
 const createdUserIds: string[] = [];
 
-async function createTestUser(hireDate: Date): Promise<{ id: string }> {
+async function createTestUser(
+  hireDate: Date,
+  status: "active" | "terminated" = "active",
+): Promise<{ id: string }> {
   const email = `${crypto.randomUUID()}@hourly-leave-test.local`;
   const user = await prisma.user.create({
     data: {
@@ -25,7 +42,7 @@ async function createTestUser(hireDate: Date): Promise<{ id: string }> {
       passwordHash: "not-used-in-test",
       role: "employee",
       hireDate,
-      status: "active",
+      status,
     },
   });
   createdUserIds.push(user.id);
@@ -301,4 +318,233 @@ describe("approveLeaveRequest (時間単位年休)", () => {
       expect(consumption).toBeNull();
     },
   );
+});
+
+describe("createLeaveRequestBatch (期間一括申請)", () => {
+  it("複数日が1つのbatchIdでまとめて作成される", async () => {
+    const user = await createTestUser(utc(2024, 1, 1));
+
+    const created = await createLeaveRequestBatch({
+      userId: user.id,
+      dates: [utc(2026, 8, 3), utc(2026, 8, 4), utc(2026, 8, 5)],
+    });
+
+    expect(created).toHaveLength(3);
+    const batchIds = new Set(created.map((r) => r.batchId));
+    expect(batchIds.size).toBe(1);
+    expect(created.every((r) => r.unit === "full_day")).toBe(true);
+    expect(created.map((r) => r.targetDate.getTime()).sort()).toEqual(
+      [utc(2026, 8, 3), utc(2026, 8, 4), utc(2026, 8, 5)].map((d) => d.getTime()).sort(),
+    );
+  });
+
+  it("対象日が空ならEmptyBatchDatesErrorになる", async () => {
+    const user = await createTestUser(utc(2024, 1, 1));
+    await expect(createLeaveRequestBatch({ userId: user.id, dates: [] })).rejects.toThrow(
+      EmptyBatchDatesError,
+    );
+  });
+
+  it("32日分を指定するとExceedsBatchSizeLimitErrorになる", async () => {
+    const user = await createTestUser(utc(2024, 1, 1));
+    const dates = Array.from({ length: 32 }, (_, i) => utc(2026, 8, 1 + i));
+    await expect(createLeaveRequestBatch({ userId: user.id, dates })).rejects.toThrow(
+      ExceedsBatchSizeLimitError,
+    );
+  });
+
+  it("入力内に同一対象日が重複しているとDuplicateDatesInBatchErrorになる", async () => {
+    const user = await createTestUser(utc(2024, 1, 1));
+    await expect(
+      createLeaveRequestBatch({
+        userId: user.id,
+        dates: [utc(2026, 8, 3), utc(2026, 8, 3)],
+      }),
+    ).rejects.toThrow(DuplicateDatesInBatchError);
+  });
+
+  it("範囲内に既存の単日申請がある場合、1件も作成されずBatchRequestConflictErrorになる(all-or-nothing)", async () => {
+    const user = await createTestUser(utc(2024, 1, 1));
+    // 対象範囲の途中の日にすでに全休の申請が存在する状態を作る
+    await createLeaveRequest({ userId: user.id, targetDate: utc(2026, 8, 4), unit: "full_day" });
+
+    await expect(
+      createLeaveRequestBatch({
+        userId: user.id,
+        dates: [utc(2026, 8, 3), utc(2026, 8, 4), utc(2026, 8, 5)],
+      }),
+    ).rejects.toThrow(BatchRequestConflictError);
+
+    // 一括申請分は1件も作成されておらず、事前に存在した1件だけが残っていること
+    const requests = await prisma.leaveRequest.findMany({ where: { userId: user.id } });
+    expect(requests).toHaveLength(1);
+    expect(requests[0].targetDate).toEqual(utc(2026, 8, 4));
+    expect(requests[0].batchId).toBeNull();
+  });
+
+  it("退職済みユーザーへの一括申請はRequestTargetNotActiveErrorで拒否される", async () => {
+    const user = await createTestUser(utc(2024, 1, 1), "terminated");
+    await expect(
+      createLeaveRequestBatch({ userId: user.id, dates: [utc(2026, 8, 3)] }),
+    ).rejects.toThrow(RequestTargetNotActiveError);
+  });
+});
+
+describe("approveLeaveRequestの一般ロック(既存の並行性バグ修正、Phase 5)", () => {
+  it("残高がちょうど1日分しかない状態で2件を同時承認すると、片方だけ成功し他方はInsufficientBalanceErrorになる", async () => {
+    const user = await createTestUser(utc(2025, 1, 1));
+    const reviewer = await createTestUser(utc(2020, 1, 1));
+    // 現在も有効な付与(実行日である今日をまたぐ有効期間)で残高をちょうど1日にする
+    await createAnnualAutoGrant(user.id, utc(2025, 7, 1), 1);
+
+    const requestA = await createLeaveRequest({
+      userId: user.id,
+      targetDate: utc(2026, 8, 3),
+      unit: "full_day",
+    });
+    const requestB = await createLeaveRequest({
+      userId: user.id,
+      targetDate: utc(2026, 8, 4),
+      unit: "full_day",
+    });
+
+    const results = await Promise.allSettled([
+      approveLeaveRequest({ requestId: requestA.id, reviewerId: reviewer.id }),
+      approveLeaveRequest({ requestId: requestB.id, reviewerId: reviewer.id }),
+    ]);
+
+    const succeeded = results.filter((r) => r.status === "fulfilled");
+    const failed = results.filter((r) => r.status === "rejected");
+    expect(succeeded).toHaveLength(1);
+    expect(failed).toHaveLength(1);
+    expect((failed[0] as PromiseRejectedResult).reason).toBeInstanceOf(InsufficientBalanceError);
+
+    // 消化内訳が二重に記録されていない(残高がマイナスになっていない)ことも確認する
+    const consumptions = await prisma.leaveConsumption.findMany({
+      where: { leaveGrant: { userId: user.id } },
+    });
+    const totalConsumed = consumptions.reduce((sum, c) => sum + decimalToNumber(c.consumedDays), 0);
+    expect(totalConsumed).toBe(1);
+  });
+});
+
+describe("approveLeaveRequestBatch / rejectLeaveRequestBatch / cancelLeaveRequestBatch", () => {
+  it("approveLeaveRequestBatch: 全件成功する", async () => {
+    const user = await createTestUser(utc(2025, 1, 1));
+    const reviewer = await createTestUser(utc(2020, 1, 1));
+    await createAnnualAutoGrant(user.id, utc(2025, 7, 1), 10);
+
+    const created = await createLeaveRequestBatch({
+      userId: user.id,
+      dates: [utc(2026, 8, 3), utc(2026, 8, 4), utc(2026, 8, 5)],
+    });
+    const batchId = created[0].batchId as string;
+
+    const outcome = await approveLeaveRequestBatch({ batchId, reviewerId: reviewer.id });
+
+    expect(outcome.succeeded).toHaveLength(3);
+    expect(outcome.failed).toHaveLength(0);
+    const approved = await prisma.leaveRequest.findMany({ where: { batchId, status: "approved" } });
+    expect(approved).toHaveLength(3);
+  });
+
+  it("approveLeaveRequestBatch: 残高不足で一部だけ失敗する部分成功(承認済みはそのまま残る)", async () => {
+    const user = await createTestUser(utc(2025, 1, 1));
+    const reviewer = await createTestUser(utc(2020, 1, 1));
+    // 残高2日分に対して3日分を一括申請し、3件目で残高不足になるようにする
+    await createAnnualAutoGrant(user.id, utc(2025, 7, 1), 2);
+
+    const created = await createLeaveRequestBatch({
+      userId: user.id,
+      dates: [utc(2026, 8, 3), utc(2026, 8, 4), utc(2026, 8, 5)],
+    });
+    const batchId = created[0].batchId as string;
+
+    const outcome = await approveLeaveRequestBatch({ batchId, reviewerId: reviewer.id });
+
+    expect(outcome.succeeded).toHaveLength(2);
+    expect(outcome.failed).toHaveLength(1);
+    expect(outcome.failed[0].reason).toBe(new InsufficientBalanceError().message);
+
+    const approved = await prisma.leaveRequest.findMany({ where: { batchId, status: "approved" } });
+    const stillPending = await prisma.leaveRequest.findMany({ where: { batchId, status: "pending" } });
+    expect(approved).toHaveLength(2);
+    expect(stillPending).toHaveLength(1);
+  });
+
+  it("rejectLeaveRequestBatch: 該当batchIdのpending全件が却下される", async () => {
+    const user = await createTestUser(utc(2024, 1, 1));
+    const reviewer = await createTestUser(utc(2020, 1, 1));
+
+    const created = await createLeaveRequestBatch({
+      userId: user.id,
+      dates: [utc(2026, 8, 3), utc(2026, 8, 4)],
+    });
+    const batchId = created[0].batchId as string;
+
+    const outcome = await rejectLeaveRequestBatch({ batchId, reviewerId: reviewer.id, reason: "都合により" });
+
+    expect(outcome.succeeded).toHaveLength(2);
+    expect(outcome.failed).toHaveLength(0);
+    const rejected = await prisma.leaveRequest.findMany({ where: { batchId, status: "rejected" } });
+    expect(rejected).toHaveLength(2);
+  });
+
+  it("cancelLeaveRequestBatch: 本人のpending全件が取消される", async () => {
+    const user = await createTestUser(utc(2024, 1, 1));
+
+    const created = await createLeaveRequestBatch({
+      userId: user.id,
+      dates: [utc(2026, 8, 3), utc(2026, 8, 4)],
+    });
+    const batchId = created[0].batchId as string;
+
+    const outcome = await cancelLeaveRequestBatch({ batchId, actingUserId: user.id });
+
+    expect(outcome.succeeded).toHaveLength(2);
+    expect(outcome.failed).toHaveLength(0);
+    const cancelled = await prisma.leaveRequest.findMany({ where: { batchId, status: "cancelled" } });
+    expect(cancelled).toHaveLength(2);
+  });
+
+  it("cancelLeaveRequestBatch: 本人以外が呼ぶと全件failedになる(NotRequestOwnerError)", async () => {
+    const user = await createTestUser(utc(2024, 1, 1));
+    const otherUser = await createTestUser(utc(2020, 1, 1));
+
+    const created = await createLeaveRequestBatch({
+      userId: user.id,
+      dates: [utc(2026, 8, 3), utc(2026, 8, 4)],
+    });
+    const batchId = created[0].batchId as string;
+
+    const outcome = await cancelLeaveRequestBatch({ batchId, actingUserId: otherUser.id });
+
+    expect(outcome.succeeded).toHaveLength(0);
+    expect(outcome.failed).toHaveLength(2);
+    expect(outcome.failed[0].reason).toBe(new NotRequestOwnerError().message);
+    const stillPending = await prisma.leaveRequest.findMany({ where: { batchId, status: "pending" } });
+    expect(stillPending).toHaveLength(2);
+  });
+
+  it("cancelLeaveRequestBatch: 一部がすでに承認済みの場合、残りのpendingだけが取消される部分成功", async () => {
+    const user = await createTestUser(utc(2025, 1, 1));
+    const reviewer = await createTestUser(utc(2020, 1, 1));
+    await createAnnualAutoGrant(user.id, utc(2025, 7, 1), 10);
+
+    const created = await createLeaveRequestBatch({
+      userId: user.id,
+      dates: [utc(2026, 8, 3), utc(2026, 8, 4)],
+    });
+    const batchId = created[0].batchId as string;
+    await approveLeaveRequest({ requestId: created[0].id, reviewerId: reviewer.id });
+
+    const outcome = await cancelLeaveRequestBatch({ batchId, actingUserId: user.id });
+
+    // approveLeaveRequestBatchと異なりcancelLeaveRequestBatchはpendingのみを対象に取得するため、
+    // すでにapproved状態の申請はそもそも処理対象に含まれない(succeeded/failedいずれにも現れない)
+    expect(outcome.succeeded).toHaveLength(1);
+    expect(outcome.failed).toHaveLength(0);
+    const approvedStillApproved = await prisma.leaveRequest.findUnique({ where: { id: created[0].id } });
+    expect(approvedStillApproved?.status).toBe("approved");
+  });
 });

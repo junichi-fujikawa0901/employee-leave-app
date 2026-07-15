@@ -97,6 +97,8 @@ model LeaveRequest {
   cancelledBy   String?             @map("cancelled_by")
   cancelledAt   DateTime?           @map("cancelled_at")
   cancelReason  String?             @map("cancel_reason")
+  /// 期間一括申請(Phase 5)でまとめて作成された場合の識別子。単日申請は常にnull
+  batchId       String?             @map("batch_id")
 
   user         User               @relation("RequestsByUser", fields: [userId], references: [id])
   reviewedBy   User?              @relation("RequestsReviewedBy", fields: [reviewedById], references: [id])
@@ -104,7 +106,9 @@ model LeaveRequest {
 
   // 同一日・同一区分の重複申請禁止（6章）はアプリケーション層でのバリデーションに加え、
   // (user_id, target_date, unit) の一意制約を pending/approved のみに適用する部分インデックスを別途検討する。
+  // batch_idはこの一意制約には含めない(重複禁止とbatch所属は独立した関心事)。
   @@index([userId, targetDate])
+  @@index([batchId])
   @@map("leave_requests")
 }
 

@@ -344,6 +344,7 @@ export interface RequestHistoryItem {
   targetDate: Date;
   unit: LeaveUnit;
   hours: number | null;
+  batchId: string | null;
   status: LeaveRequestStatus;
   requestedAt: Date;
   reviewedById: string | null;
@@ -551,6 +552,7 @@ export async function getEmployeeDetail(userId: string): Promise<EmployeeDetail 
       targetDate: request.targetDate,
       unit: request.unit,
       hours: request.hours,
+      batchId: request.batchId,
       status: request.status,
       requestedAt: request.requestedAt,
       reviewedById: request.reviewedById,

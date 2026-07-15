@@ -1,11 +1,18 @@
 import type { LeaveRequest } from "@/generated/prisma/client";
-import { GrantType, LeaveRequestStatus, LeaveUnit, Prisma } from "@/generated/prisma/client";
-import { startOfTodayUTC } from "@/lib/date/calendar";
+import { GrantType, LeaveRequestStatus, LeaveUnit, Prisma, UserStatus } from "@/generated/prisma/client";
+import { startOfTodayUTC, toUtcMidnight } from "@/lib/date/calendar";
 import { decimalToNumber } from "@/lib/decimal";
-import { planFefoConsumption } from "@/lib/leave/balance";
+import { InsufficientBalanceError, planFefoConsumption } from "@/lib/leave/balance";
 import { getObligationPeriods, type ObligationPeriod } from "@/lib/leave/annual-obligation";
+import { MAX_BULK_REQUEST_DAYS } from "@/lib/leave/date-range";
 import {
+  BatchRequestConflictError,
+  type BatchRequestConflictReason,
+  DomainError,
+  DuplicateDatesInBatchError,
   DuplicateRequestError,
+  EmptyBatchDatesError,
+  ExceedsBatchSizeLimitError,
   ExceedsDailyLimitError,
   ExceedsHourlyAnnualCapError,
   HourlyLeaveOutsideObligationPeriodError,
@@ -14,6 +21,7 @@ import {
   RequestNotApprovedError,
   RequestNotFoundError,
   RequestNotPendingError,
+  RequestTargetNotActiveError,
   SelfApprovalError,
   WithdrawalDeadlinePassedError,
 } from "@/lib/leave/errors";
@@ -25,6 +33,12 @@ import {
   unitToDays,
 } from "@/lib/leave/request-rules";
 import { prisma } from "@/lib/prisma";
+
+/** 単日申請(createLeaveRequest)・期間一括申請(createLeaveRequestBatch)の両方で使う対象日ロックキー */
+async function lockTargetDate(tx: Prisma.TransactionClient, userId: string, targetDate: Date): Promise<void> {
+  const targetDateLockKey = Math.trunc(targetDate.getTime() / (1000 * 60 * 60 * 24));
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${userId}), ${targetDateLockKey})`;
+}
 
 /**
  * targetDateが属する義務期間(Phase 2のObligationPeriod)を返す。複数件返ることがある
@@ -140,8 +154,7 @@ export async function createLeaveRequest(input: {
       ]);
     }
 
-    const targetDateLockKey = Math.trunc(input.targetDate.getTime() / (1000 * 60 * 60 * 24));
-    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${input.userId}), ${targetDateLockKey})`;
+    await lockTargetDate(tx, input.userId, input.targetDate);
 
     const existing = await tx.leaveRequest.findMany({
       where: {
@@ -166,6 +179,84 @@ export async function createLeaveRequest(input: {
         unit: input.unit,
         hours,
       },
+    });
+  });
+}
+
+/**
+ * spec.md 6章: 複数日をまとめて1回の操作で申請する(期間一括申請、Phase 5)。
+ * 全休(full_day)のみ対象。1件でも既存申請と衝突する日があれば1件も作成しない
+ * (all-or-nothing)。既存の単日createLeaveRequestと同じadvisory lockキー空間
+ * (hashtext(userId), 対象日のunix日数)を対象日昇順で取得することで、同時に飛んでくる
+ * 単日申請とも正しく直列化される。
+ */
+export async function createLeaveRequestBatch(input: {
+  userId: string;
+  dates: Date[];
+}): Promise<LeaveRequest[]> {
+  if (input.dates.length === 0) {
+    throw new EmptyBatchDatesError();
+  }
+  if (input.dates.length > MAX_BULK_REQUEST_DAYS) {
+    throw new ExceedsBatchSizeLimitError();
+  }
+
+  const normalizedDates = input.dates.map((date) => toUtcMidnight(date));
+  const uniqueKeys = new Set(normalizedDates.map((date) => date.getTime()));
+  if (uniqueKeys.size !== normalizedDates.length) {
+    throw new DuplicateDatesInBatchError();
+  }
+
+  const sortedDates = [...normalizedDates].sort((a, b) => a.getTime() - b.getTime());
+
+  return prisma.$transaction(async (tx) => {
+    const user = await tx.user.findUnique({ where: { id: input.userId }, select: { status: true } });
+    if (!user || user.status !== UserStatus.active) {
+      throw new RequestTargetNotActiveError();
+    }
+
+    for (const date of sortedDates) {
+      await lockTargetDate(tx, input.userId, date);
+    }
+
+    const minDate = sortedDates[0];
+    const maxDate = sortedDates[sortedDates.length - 1];
+    const existing = await tx.leaveRequest.findMany({
+      where: {
+        userId: input.userId,
+        targetDate: { gte: minDate, lte: maxDate },
+        status: { in: [LeaveRequestStatus.pending, LeaveRequestStatus.approved] },
+      },
+      select: { targetDate: true, unit: true, hours: true },
+    });
+    const existingByDate = new Map<number, { unit: LeaveUnit; hours: number | null }[]>();
+    for (const request of existing) {
+      const key = request.targetDate.getTime();
+      const list = existingByDate.get(key) ?? [];
+      list.push({ unit: request.unit, hours: request.hours });
+      existingByDate.set(key, list);
+    }
+
+    const conflicts: { targetDate: Date; reason: BatchRequestConflictReason }[] = [];
+    for (const date of sortedDates) {
+      const existingForDate = existingByDate.get(date.getTime()) ?? [];
+      const check = checkNewRequest(existingForDate, LeaveUnit.full_day, null);
+      if (!check.ok) {
+        conflicts.push({ targetDate: date, reason: check.reason });
+      }
+    }
+    if (conflicts.length > 0) {
+      throw new BatchRequestConflictError(conflicts);
+    }
+
+    const batchId = crypto.randomUUID();
+    return tx.leaveRequest.createManyAndReturn({
+      data: sortedDates.map((targetDate) => ({
+        userId: input.userId,
+        targetDate,
+        unit: LeaveUnit.full_day,
+        batchId,
+      })),
     });
   });
 }
@@ -260,6 +351,13 @@ export async function approveLeaveRequest(input: { requestId: string; reviewerId
   const validatedHours = request.unit === LeaveUnit.hourly ? assertValidHourlyHours(request.hours) : null;
 
   await prisma.$transaction(async (tx) => {
+    // 同一ユーザーへの同時承認を直列化する一般ロック(Phase 5)。承認は残高を読んで
+    // LeaveConsumptionを書き込むにもかかわらず、これまでcreateLeaveRequestと違い
+    // ユーザー単位のロックを取得しておらず、2人の管理者が同時に同じ社員の別々の申請を
+    // 承認すると残高を超えて二重消費しうる既存バグがあった。固定キー(0)は対象日ロックの
+    // 数値空間・時間単位ロックの文字列saltとは別のsalt(':approve')を使うため衝突しない。
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${request.userId}:approve`}), 0)`;
+
     if (request.unit === LeaveUnit.hourly) {
       // 作成時から承認時までの間に同じ義務期間内の他の時間単位申請が承認・取消される
       // 可能性があるため、承認時にも上限を再チェックする(Phase 4のmust-fix対応)。
@@ -267,11 +365,14 @@ export async function approveLeaveRequest(input: { requestId: string; reviewerId
       // まだpendingのため通常はapprovedのみを対象にした集計に紛れ込まないが、
       // 同一申請への二重承認レース時にもエラー種別が安定するよう明示的に除外する
       // (should-fix対応)。
+      // 上のユーザー単位ロックにより同一ユーザーへの同時承認はすでに直列化されているため、
+      // Phase 4で導入した期間スコープlock(lockObligationPeriodsForHourlyCap)の
+      // ここでの呼び出しは冗長であり削除した(createLeaveRequest側は一般ロックを
+      // 持たないため、そちらの呼び出しは維持する)。
       const periods = await findObligationPeriodsForDate(tx, request.userId, request.targetDate);
       if (periods.length === 0) {
         throw new HourlyLeaveOutsideObligationPeriodError();
       }
-      await lockObligationPeriodsForHourlyCap(tx, request.userId, periods);
       await assertWithinHourlyCap(
         tx,
         request.userId,
@@ -357,4 +458,75 @@ export async function rejectLeaveRequest(input: {
   if (result.count === 0) {
     throw new RequestNotPendingError();
   }
+}
+
+export interface BatchOutcome {
+  succeeded: string[];
+  failed: { requestId: string; reason: string }[];
+}
+
+async function runBatchOperation(
+  batchId: string,
+  operation: (requestId: string) => Promise<void>,
+): Promise<BatchOutcome> {
+  const requests = await prisma.leaveRequest.findMany({
+    where: { batchId, status: LeaveRequestStatus.pending },
+    orderBy: { targetDate: "asc" },
+    select: { id: true },
+  });
+
+  const succeeded: string[] = [];
+  const failed: { requestId: string; reason: string }[] = [];
+  for (const request of requests) {
+    try {
+      await operation(request.id);
+      succeeded.push(request.id);
+    } catch (error) {
+      if (error instanceof DomainError || error instanceof InsufficientBalanceError) {
+        failed.push({ requestId: request.id, reason: error.message });
+      } else {
+        throw error;
+      }
+    }
+  }
+  return { succeeded, failed };
+}
+
+/**
+ * 期間一括申請(Phase 5)のうちpending中のものをまとめて承認する。既存の単発
+ * approveLeaveRequest(一般ロック追加済み)を1件ずつループで呼び、部分成功を許容する
+ * (作成=全体ロールバックとは非対称な設計。1件ごとの残高消費は独立しているため)。
+ */
+export async function approveLeaveRequestBatch(input: {
+  batchId: string;
+  reviewerId: string;
+}): Promise<BatchOutcome> {
+  return runBatchOperation(input.batchId, (requestId) =>
+    approveLeaveRequest({ requestId, reviewerId: input.reviewerId }),
+  );
+}
+
+/** 期間一括申請のうちpending中のものをまとめて却下する(部分成功を許容) */
+export async function rejectLeaveRequestBatch(input: {
+  batchId: string;
+  reviewerId: string;
+  reason?: string;
+}): Promise<BatchOutcome> {
+  return runBatchOperation(input.batchId, (requestId) =>
+    rejectLeaveRequest({ requestId, reviewerId: input.reviewerId, reason: input.reason }),
+  );
+}
+
+/**
+ * 申請者本人がpending中の一括申請をまとめて取消する(単日cancelLeaveRequestの
+ * 「本人かつpendingのみ」という制約をそのまま流用。部分成功を許容)。
+ */
+export async function cancelLeaveRequestBatch(input: {
+  batchId: string;
+  actingUserId: string;
+  reason?: string;
+}): Promise<BatchOutcome> {
+  return runBatchOperation(input.batchId, (requestId) =>
+    cancelLeaveRequest({ requestId, actingUserId: input.actingUserId, reason: input.reason }),
+  );
 }

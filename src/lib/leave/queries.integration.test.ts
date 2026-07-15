@@ -1,5 +1,6 @@
 import { describe, it, expect, afterEach } from "vitest";
 
+import { approveLeaveRequestBatch, createLeaveRequestBatch } from "@/lib/leave/mutations";
 import { getAnnualObligation, getLeaveLedger } from "@/lib/leave/queries";
 import { computeExpireDate } from "@/lib/leave/schedule";
 import { prisma } from "@/lib/prisma";
@@ -184,6 +185,27 @@ describe("getAnnualObligation", () => {
     expect(result.current).not.toBeNull();
     expect(result.current?.status.taken).toBe(0);
     expect(result.current?.status.planned).toBe(0);
+  });
+
+  it("期間一括申請(Phase 5)で作成・承認された申請も、単日申請と同じようにtakenへ反映される(batchIdの有無で扱いが変わらない回帰確認)", async () => {
+    const user = await createTestUser(utc(2024, 1, 1));
+    const reviewer = await createTestUser(utc(2020, 1, 1));
+    // approveLeaveRequestBatch(内部でapproveLeaveRequestを使う)は残高計算の基準日に実際の
+    // 現在日時を使うため、付与記録は「現在も失効していない」日付にする必要がある
+    await createAnnualAutoGrant(user.id, utc(2025, 7, 1), 10); // 期間: 2025-07-01〜2026-06-30
+
+    const created = await createLeaveRequestBatch({
+      userId: user.id,
+      dates: [utc(2025, 8, 1), utc(2025, 8, 2), utc(2025, 8, 3)],
+    });
+    const batchId = created[0].batchId as string;
+    const outcome = await approveLeaveRequestBatch({ batchId, reviewerId: reviewer.id });
+    expect(outcome.failed).toHaveLength(0);
+
+    const result = await getAnnualObligation(user.id, utc(2025, 12, 1));
+
+    expect(result.current).not.toBeNull();
+    expect(result.current?.status.taken).toBe(3);
   });
 });
 

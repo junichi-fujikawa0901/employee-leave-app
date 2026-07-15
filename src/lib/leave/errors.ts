@@ -77,3 +77,45 @@ export class ExceedsHourlyAnnualCapError extends DomainError {
     super("時間単位年休は義務期間内で40時間(5日相当)までです");
   }
 }
+
+export class EmptyBatchDatesError extends DomainError {
+  constructor() {
+    super("対象日を1件以上指定してください");
+  }
+}
+
+export class ExceedsBatchSizeLimitError extends DomainError {
+  constructor() {
+    super("一括申請できるのは31日までです");
+  }
+}
+
+export class DuplicateDatesInBatchError extends DomainError {
+  constructor() {
+    super("対象日の中に重複があります");
+  }
+}
+
+function formatDate(date: Date): string {
+  return date.toISOString().slice(0, 10);
+}
+
+export type BatchRequestConflictReason = "duplicate_unit" | "exceeds_daily_limit";
+
+export class BatchRequestConflictError extends DomainError {
+  constructor(
+    public readonly conflicts: { targetDate: Date; reason: BatchRequestConflictReason }[],
+  ) {
+    super(
+      `一部の対象日で申請できません(重複または1日の上限超過): ${conflicts
+        .map((c) => formatDate(c.targetDate))
+        .join(", ")}`,
+    );
+  }
+}
+
+export class RequestTargetNotActiveError extends DomainError {
+  constructor() {
+    super("退職済みの社員は有給を申請できません");
+  }
+}

@@ -13,6 +13,11 @@ import {
 import { getEmployeeDetail } from "@/lib/leave/queries";
 import { isWithinWithdrawalWindow } from "@/lib/leave/request-rules";
 
+import {
+  ApproveRequestBatchButton,
+  CancelRequestBatchButton,
+  RejectRequestBatchButton,
+} from "./batch-action-buttons";
 import { LeaveRequestForm } from "./leave-request-form";
 import {
   ApproveRequestButton,
@@ -54,6 +59,28 @@ export default async function EmployeeDetailPage({
   const visibleRequests = selectedYear
     ? employee.requests.filter((request) => request.targetDate.getUTCFullYear() === selectedYear)
     : employee.requests;
+
+  // 期間一括申請(Phase 5): batchIdごとにpending件数をemployee.requests全体(年タブに関わらず)から
+  // 集計し、2件以上pendingが残っているものだけ「まとめて承認/却下/取消」の対象として抽出する
+  const batchGroupsMap = new Map<string, { pendingRequestIds: string[]; dates: Date[] }>();
+  for (const request of employee.requests) {
+    if (!request.batchId) {
+      continue;
+    }
+    const entry = batchGroupsMap.get(request.batchId) ?? { pendingRequestIds: [], dates: [] };
+    if (request.status === "pending") {
+      entry.pendingRequestIds.push(request.id);
+      entry.dates.push(request.targetDate);
+    }
+    batchGroupsMap.set(request.batchId, entry);
+  }
+  const pendingBatchGroups = Array.from(batchGroupsMap.entries())
+    .filter(([, group]) => group.pendingRequestIds.length >= 2)
+    .map(([batchId, group]) => ({
+      batchId,
+      pendingRequestIds: group.pendingRequestIds,
+      dates: [...group.dates].sort((a, b) => a.getTime() - b.getTime()),
+    }));
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">
@@ -136,6 +163,36 @@ export default async function EmployeeDetailPage({
 
       {viewerIsSelf && <LeaveRequestForm employeeId={employee.id} />}
 
+      {pendingBatchGroups.length > 0 && (
+        <section className="rounded-lg bg-white p-6 shadow">
+          <h2 className="mb-4 text-sm font-semibold text-gray-900">一括申請</h2>
+          <div className="space-y-3">
+            {pendingBatchGroups.map((group) => (
+              <div
+                key={group.batchId}
+                className="flex flex-wrap items-center justify-between gap-3 rounded border border-gray-100 p-3"
+              >
+                <div className="text-sm text-gray-700">
+                  <p>対象日: {group.dates.map((date) => formatDate(date)).join(", ")}</p>
+                  <p className="text-xs text-gray-400">申請中{group.pendingRequestIds.length}件</p>
+                </div>
+                <div className="flex gap-2">
+                  {viewerIsSelf && (
+                    <CancelRequestBatchButton employeeId={employee.id} batchId={group.batchId} />
+                  )}
+                  {viewerIsAdmin && !viewerIsSelf && (
+                    <>
+                      <ApproveRequestBatchButton employeeId={employee.id} batchId={group.batchId} />
+                      <RejectRequestBatchButton employeeId={employee.id} batchId={group.batchId} />
+                    </>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
       <section className="rounded-lg bg-white p-6 shadow">
         <div className="mb-4 flex items-center justify-between">
           <h2 className="text-sm font-semibold text-gray-900">有給取得履歴</h2>
@@ -185,7 +242,10 @@ export default async function EmployeeDetailPage({
             <tbody>
               {visibleRequests.map((request) => (
                 <tr key={request.id} className="border-b border-gray-100 last:border-0">
-                  <td className="py-2 text-gray-900">{formatDate(request.targetDate)}</td>
+                  <td className="py-2 text-gray-900">
+                    {formatDate(request.targetDate)}
+                    {request.batchId && <span className="ml-1 text-xs text-gray-400">(一括)</span>}
+                  </td>
                   <td className="py-2 text-gray-700">
                     {UNIT_LABELS[request.unit]}
                     {request.unit === "hourly" && request.hours != null ? `(${request.hours}時間)` : ""}

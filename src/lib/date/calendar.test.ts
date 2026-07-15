@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { addMonthsUTC, addYearsUTC, addDaysUTC } from "@/lib/date/calendar";
+import { addMonthsUTC, addYearsUTC, addDaysUTC, enumerateDatesUTC } from "@/lib/date/calendar";
 
 const utc = (y: number, m: number, d: number) => new Date(Date.UTC(y, m - 1, d));
 
@@ -26,5 +26,24 @@ describe("addDaysUTC", () => {
 
   it("負の日数で減算できる", () => {
     expect(addDaysUTC(utc(2026, 7, 1), -1)).toEqual(utc(2026, 6, 30));
+  });
+});
+
+describe("enumerateDatesUTC", () => {
+  it("開始日=終了日の場合は1件だけ返す", () => {
+    expect(enumerateDatesUTC(utc(2026, 8, 1), utc(2026, 8, 1))).toEqual([utc(2026, 8, 1)]);
+  });
+
+  it("複数日を月またぎで列挙する", () => {
+    expect(enumerateDatesUTC(utc(2026, 6, 29), utc(2026, 7, 2))).toEqual([
+      utc(2026, 6, 29),
+      utc(2026, 6, 30),
+      utc(2026, 7, 1),
+      utc(2026, 7, 2),
+    ]);
+  });
+
+  it("開始日が終了日より後だとErrorを投げる", () => {
+    expect(() => enumerateDatesUTC(utc(2026, 8, 2), utc(2026, 8, 1))).toThrow();
   });
 });
