@@ -82,6 +82,7 @@ describe("buildLeaveLedgerWorkbook", () => {
           {
             targetDate: utc(2024, 8, 1),
             unit: "full_day",
+            hours: null,
             consumedDays: 1,
             isFuture: false,
             isOverlap: false,
@@ -89,6 +90,7 @@ describe("buildLeaveLedgerWorkbook", () => {
           {
             targetDate: utc(2025, 1, 10),
             unit: "am_half",
+            hours: null,
             consumedDays: 0.5,
             isFuture: true,
             isOverlap: true,
@@ -115,5 +117,38 @@ describe("buildLeaveLedgerWorkbook", () => {
     expect(futureRow).toContain("午前半休");
     expect(futureRow).toContain("予定");
     expect(futureRow).toContain("重複義務期間により再掲");
+  });
+
+  it("時間単位の行は区分ラベル「時間単位」と時間数列が正しく出力される", async () => {
+    const periods: LeaveLedgerPeriod[] = [
+      {
+        start: utc(2024, 7, 1),
+        end: utc(2025, 6, 30),
+        baseGrantDays: 10,
+        entries: [
+          {
+            targetDate: utc(2024, 8, 1),
+            unit: "hourly",
+            hours: 4,
+            consumedDays: 0.5,
+            isFuture: false,
+            isOverlap: false,
+          },
+        ],
+        takenDays: 0.5,
+        plannedDays: 0,
+        balanceAsOf: utc(2024, 12, 1),
+        remainingDays: 9.5,
+      },
+    ];
+    const buffer = await buildLeaveLedgerWorkbook(employee, periods, utc(2024, 12, 1));
+    const sheet = await loadSheet(buffer);
+
+    const allRows = [...Array(sheet.rowCount).keys()].map((i) => rowTexts(sheet, i + 1));
+    const hourlyRow = allRows.find((r) => r.includes("2024-08-01"));
+
+    expect(hourlyRow).toBeDefined();
+    expect(hourlyRow).toContain("時間単位");
+    expect(hourlyRow).toContain("4");
   });
 });

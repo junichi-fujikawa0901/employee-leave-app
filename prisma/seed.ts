@@ -115,14 +115,14 @@ async function createAutoGrantLedger(userId: string, hireDate: Date, throughDate
       targetDate: Date,
       unit: LeaveUnit,
       reviewedById: string,
-      overrides?: { requestedAt?: Date; reviewedAt?: Date },
+      overrides?: { requestedAt?: Date; reviewedAt?: Date; hours?: number },
     ) {
       const active: GrantBalanceInput[] = grants
         .filter((g) => g.remaining > 0 && g.grantedDate.getTime() <= targetDate.getTime())
         .filter((g) => isGrantActive(g.expireDate, targetDate))
         .map((g) => ({ id: g.id, grantedDate: g.grantedDate, expireDate: g.expireDate, remainingDays: g.remaining }));
 
-      const plan = planFefoConsumption(active, unitToDays(unit));
+      const plan = planFefoConsumption(active, unitToDays(unit, overrides?.hours ?? null));
 
       const requestedAt = overrides?.requestedAt ?? new Date(targetDate.getTime() - 5 * 24 * 60 * 60 * 1000);
       const reviewedAt = overrides?.reviewedAt ?? new Date(targetDate.getTime() - 3 * 24 * 60 * 60 * 1000);
@@ -132,6 +132,7 @@ async function createAutoGrantLedger(userId: string, hireDate: Date, throughDate
           userId,
           targetDate,
           unit,
+          hours: overrides?.hours ?? null,
           status: "approved",
           requestedAt,
           reviewedById,
@@ -280,6 +281,29 @@ async function main() {
     });
   });
 
+  // 時間単位年休(Phase 4)の検証用社員。進行中の義務期間内で時間単位年休を複数回取得しており、
+  // 上限(40時間=5日相当)に近い(承認済み32時間+承認待ち4時間=36時間、上限には未到達)状態を再現する
+  const hourlyUser = await ensureUser({
+    name: "時間 六郎",
+    email: "hourly-test@example.com",
+    password: "password1234",
+    role: "employee",
+    hireDate: utcDate(2025, 7, 15),
+  });
+  await resetLeaveData(hourlyUser.id, async () => {
+    const ledger = await createAutoGrantLedger(hourlyUser.id, hourlyUser.hireDate, today);
+    // 義務期間(基準日2026-01-15〜2027-01-14)内で1日8時間ずつ、承認済みで4回取得(合計32時間)
+    await ledger.consumeApproved(utcDate(2026, 2, 10), "hourly", admin1.id, { hours: 8 });
+    await ledger.consumeApproved(utcDate(2026, 3, 10), "hourly", admin1.id, { hours: 8 });
+    await ledger.consumeApproved(utcDate(2026, 4, 10), "hourly", admin1.id, { hours: 8 });
+    await ledger.consumeApproved(utcDate(2026, 5, 10), "hourly", admin1.id, { hours: 8 });
+
+    // 承認待ちの時間単位申請(承認されると合計36時間になり、上限40時間にはまだ余裕がある)
+    await prisma.leaveRequest.create({
+      data: { userId: hourlyUser.id, targetDate: daysFromNow(21), unit: "hourly", hours: 4, status: "pending" },
+    });
+  });
+
   // 退職済み社員(退職処理による自動却下・自動取消が反映済みの状態を再現)。
   // 退職日以降は付与が発生しないため、法定スケジュールはthroughDate=退職日で打ち切る
   const terminatedUser = await ensureUser({
@@ -338,6 +362,7 @@ async function main() {
   console.log("  expired-grant@example.com (失効枠あり)");
   console.log("  fefo-test@example.com (FEFO分割消費検証用・pending申請あり)");
   console.log("  rejected-cancelled@example.com (却下・取消履歴あり)");
+  console.log("  hourly-test@example.com (時間単位年休の取得履歴あり・承認待ち含む)");
   console.log("  terminated@example.com (退職済み・ログイン不可)");
 }
 

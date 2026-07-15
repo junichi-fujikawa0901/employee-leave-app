@@ -44,6 +44,11 @@ function buildAnnualObligation(
     let taken = 0;
     let planned = 0;
     for (const request of requests) {
+      // 時間単位年休(Phase 4)は年5日取得義務の算定に含まれない(労基法上、時間単位年休は
+      // 年5日取得義務の取得済み・取得予定いずれにもカウントしない)。
+      if (request.unit === LeaveUnit.hourly) {
+        continue;
+      }
       const time = request.targetDate.getTime();
       if (time < period.start.getTime() || time > period.end.getTime()) {
         continue;
@@ -127,18 +132,6 @@ export async function getRemainingBalance(
 ): Promise<number> {
   const grants = await getActiveGrantsWithRemaining(userId, asOf);
   return sumRemaining(grants);
-}
-
-export async function getActiveUnitsOnDate(userId: string, targetDate: Date): Promise<LeaveUnit[]> {
-  const requests = await prisma.leaveRequest.findMany({
-    where: {
-      userId,
-      targetDate,
-      status: { in: [LeaveRequestStatus.pending, LeaveRequestStatus.approved] },
-    },
-    select: { unit: true },
-  });
-  return requests.map((request) => request.unit);
 }
 
 export async function hasAnyGrant(userId: string): Promise<boolean> {
@@ -350,6 +343,7 @@ export interface RequestHistoryItem {
   id: string;
   targetDate: Date;
   unit: LeaveUnit;
+  hours: number | null;
   status: LeaveRequestStatus;
   requestedAt: Date;
   reviewedById: string | null;
@@ -410,6 +404,7 @@ async function getRemainingDaysAsOf(userId: string, asOf: Date): Promise<number>
 export interface LeaveLedgerEntry {
   targetDate: Date;
   unit: LeaveUnit;
+  hours: number | null;
   consumedDays: number;
   isFuture: boolean;
   isOverlap: boolean;
@@ -454,7 +449,7 @@ export async function getLeaveLedger(
 
   const requests = await prisma.leaveRequest.findMany({
     where: { userId, status: LeaveRequestStatus.approved, targetDate: { gte: minStart, lte: maxEnd } },
-    select: { targetDate: true, unit: true },
+    select: { targetDate: true, unit: true, hours: true },
     orderBy: { targetDate: "asc" },
   });
 
@@ -471,7 +466,7 @@ export async function getLeaveLedger(
         if (time < period.start.getTime() || time > period.end.getTime()) {
           continue;
         }
-        const days = unitToDays(request.unit);
+        const days = unitToDays(request.unit, request.hours);
         const isFuture = time > normalizedAsOf.getTime();
         if (isFuture) {
           plannedDays += days;
@@ -484,7 +479,14 @@ export async function getLeaveLedger(
             time >= other.start.getTime() &&
             time <= other.end.getTime(),
         );
-        entries.push({ targetDate: request.targetDate, unit: request.unit, consumedDays: days, isFuture, isOverlap });
+        entries.push({
+          targetDate: request.targetDate,
+          unit: request.unit,
+          hours: request.hours,
+          consumedDays: days,
+          isFuture,
+          isOverlap,
+        });
       }
 
       const balanceAsOf = period.end.getTime() < normalizedAsOf.getTime() ? period.end : normalizedAsOf;
@@ -548,6 +550,7 @@ export async function getEmployeeDetail(userId: string): Promise<EmployeeDetail 
       id: request.id,
       targetDate: request.targetDate,
       unit: request.unit,
+      hours: request.hours,
       status: request.status,
       requestedAt: request.requestedAt,
       reviewedById: request.reviewedById,

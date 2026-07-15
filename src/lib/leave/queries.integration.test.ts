@@ -77,6 +77,24 @@ async function createApprovedRequestWithConsumption(
   });
 }
 
+/** getLeaveLedger用: 時間単位年休の承認済み申請(reviewedAt指定)+消化明細をまとめて作成する */
+async function createApprovedHourlyRequestWithConsumption(
+  userId: string,
+  targetDate: Date,
+  reviewedAt: Date,
+  grantId: string,
+  hours: number,
+  consumedDays: number,
+): Promise<void> {
+  const request = await prisma.leaveRequest.create({
+    data: { userId, targetDate, unit: "hourly", hours, status: "approved", reviewedAt },
+    select: { id: true },
+  });
+  await prisma.leaveConsumption.create({
+    data: { leaveRequestId: request.id, leaveGrantId: grantId, consumedDays },
+  });
+}
+
 afterEach(async () => {
   if (createdUserIds.length === 0) {
     return;
@@ -147,6 +165,25 @@ describe("getAnnualObligation", () => {
 
     expect(result.current).toBeNull();
     expect(result.otherUnmetCount).toBe(0);
+  });
+
+  it("時間単位年休(Phase 4)の承認済み申請はtaken/plannedいずれにもカウントされない(非算入の回帰テスト)", async () => {
+    const user = await createTestUser(utc(2024, 1, 1));
+    await createAnnualAutoGrant(user.id, utc(2024, 7, 1), 10); // 2024-07-01〜2025-06-30
+
+    // 過去分(taken対象になりうる日)・未来分(planned対象になりうる日)の両方を時間単位で作る
+    await prisma.leaveRequest.create({
+      data: { userId: user.id, targetDate: utc(2024, 8, 1), unit: "hourly", hours: 8, status: "approved" },
+    });
+    await prisma.leaveRequest.create({
+      data: { userId: user.id, targetDate: utc(2025, 1, 10), unit: "hourly", hours: 8, status: "approved" },
+    });
+
+    const result = await getAnnualObligation(user.id, utc(2024, 12, 1));
+
+    expect(result.current).not.toBeNull();
+    expect(result.current?.status.taken).toBe(0);
+    expect(result.current?.status.planned).toBe(0);
   });
 });
 
@@ -266,5 +303,28 @@ describe("getLeaveLedger", () => {
     expect(periodLast?.entries).toHaveLength(1);
     expect(periodMid?.entries[0].isOverlap).toBe(true);
     expect(periodLast?.entries[0].isOverlap).toBe(true);
+  });
+
+  it("時間単位年休のentryはhours/consumedDaysが正しく反映される(4時間→0.5日)", async () => {
+    const user = await createTestUser(utc(2024, 1, 1));
+    const grant = await createAnnualAutoGrant(user.id, utc(2024, 7, 1), 10);
+    await createApprovedHourlyRequestWithConsumption(
+      user.id,
+      utc(2024, 8, 1),
+      utc(2024, 8, 1),
+      grant.id,
+      4,
+      0.5,
+    );
+
+    const result = await getLeaveLedger(user.id, utc(2024, 12, 1));
+
+    expect(result).toHaveLength(1);
+    expect(result[0].entries).toHaveLength(1);
+    const [entry] = result[0].entries;
+    expect(entry.unit).toBe("hourly");
+    expect(entry.hours).toBe(4);
+    expect(entry.consumedDays).toBe(0.5);
+    expect(result[0].takenDays).toBe(0.5);
   });
 });

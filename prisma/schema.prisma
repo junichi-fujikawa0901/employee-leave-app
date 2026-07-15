@@ -28,6 +28,7 @@ enum LeaveUnit {
   full_day
   am_half
   pm_half
+  hourly
 }
 
 enum LeaveRequestStatus {
@@ -86,6 +87,8 @@ model LeaveRequest {
   userId        String              @map("user_id")
   targetDate    DateTime            @map("target_date") @db.Date
   unit          LeaveUnit
+  /// 時間単位年休(unit = hourly)の取得時間数(1〜8の整数)。hourly以外は常にnull
+  hours         Int?                @map("hours")
   status        LeaveRequestStatus  @default(pending)
   requestedAt   DateTime            @default(now()) @map("requested_at")
   reviewedById  String?             @map("reviewed_by")
@@ -110,7 +113,8 @@ model LeaveConsumption {
   id             String    @id @default(cuid())
   leaveRequestId String    @map("leave_request_id")
   leaveGrantId   String    @map("leave_grant_id")
-  consumedDays   Decimal   @map("consumed_days") @db.Decimal(4, 1)
+  /// 時間単位年休の消化(例: 1時間=0.125日)を保持するためDecimal(4,1)からDecimal(6,3)に拡張
+  consumedDays   Decimal   @map("consumed_days") @db.Decimal(6, 3)
   cancelledAt    DateTime? @map("cancelled_at")
 
   leaveRequest LeaveRequest @relation(fields: [leaveRequestId], references: [id])

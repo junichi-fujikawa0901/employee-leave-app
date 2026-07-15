@@ -59,3 +59,21 @@ export class GrantTargetNotActiveError extends DomainError {
     super("退職済みの社員には自動付与を実行できません");
   }
 }
+
+export class InvalidHourlyRequestError extends DomainError {
+  constructor() {
+    super("時間単位年休は1〜8時間の整数で指定してください");
+  }
+}
+
+export class HourlyLeaveOutsideObligationPeriodError extends DomainError {
+  constructor() {
+    super("対象日に対応する法定付与期間が見つかりません");
+  }
+}
+
+export class ExceedsHourlyAnnualCapError extends DomainError {
+  constructor() {
+    super("時間単位年休は義務期間内で40時間(5日相当)までです");
+  }
+}

@@ -1,11 +1,15 @@
-import type { LeaveRequest, LeaveUnit } from "@/generated/prisma/client";
-import { LeaveRequestStatus } from "@/generated/prisma/client";
+import type { LeaveRequest } from "@/generated/prisma/client";
+import { GrantType, LeaveRequestStatus, LeaveUnit, Prisma } from "@/generated/prisma/client";
 import { startOfTodayUTC } from "@/lib/date/calendar";
 import { decimalToNumber } from "@/lib/decimal";
 import { planFefoConsumption } from "@/lib/leave/balance";
+import { getObligationPeriods, type ObligationPeriod } from "@/lib/leave/annual-obligation";
 import {
   DuplicateRequestError,
   ExceedsDailyLimitError,
+  ExceedsHourlyAnnualCapError,
+  HourlyLeaveOutsideObligationPeriodError,
+  InvalidHourlyRequestError,
   NotRequestOwnerError,
   RequestNotApprovedError,
   RequestNotFoundError,
@@ -13,16 +17,129 @@ import {
   SelfApprovalError,
   WithdrawalDeadlinePassedError,
 } from "@/lib/leave/errors";
-import { checkNewRequest, isWithinWithdrawalWindow, unitToDays } from "@/lib/leave/request-rules";
+import {
+  checkHourlyCap,
+  checkNewRequest,
+  isWithinWithdrawalWindow,
+  STANDARD_DAILY_HOURS,
+  unitToDays,
+} from "@/lib/leave/request-rules";
 import { prisma } from "@/lib/prisma";
 
-/** spec.md 6章-2: 重複申請・1日合計1.0日超過チェックを行った上で申請を作成する */
+/**
+ * targetDateが属する義務期間(Phase 2のObligationPeriod)を返す。複数件返ることがある
+ * (月末入社等で義務期間が1日重複するケース、annual-obligation.tsのgetObligationPeriods参照)。
+ * asOfにはtargetDateそのものを渡す(today基準だと、未来日の申請がまだ始まっていない期間に
+ * 属する場合にgetObligationPeriodsがperiod.start<=asOfで弾いてしまい期間が見つからなくなるため)。
+ */
+async function findObligationPeriodsForDate(
+  tx: Prisma.TransactionClient,
+  userId: string,
+  targetDate: Date,
+): Promise<ObligationPeriod[]> {
+  const grants = await tx.leaveGrant.findMany({
+    where: { userId, grantType: GrantType.annual_auto, grantedDays: { gte: 10 } },
+    select: { grantedDate: true, grantedDays: true },
+  });
+  const periods = getObligationPeriods(
+    grants.map((grant) => ({
+      grantedDate: grant.grantedDate,
+      grantedDays: decimalToNumber(grant.grantedDays),
+    })),
+    targetDate,
+  );
+  return periods.filter(
+    (period) => targetDate.getTime() >= period.start.getTime() && targetDate.getTime() <= period.end.getTime(),
+  );
+}
+
+/**
+ * 時間単位年休の上限チェックを義務期間単位で直列化するためのadvisory lock。
+ * 既存の対象日ロック(hashtext(userId))とは別のキー空間を使う。
+ * 重複義務期間で複数期間がヒットする場合も常にperiod.start昇順で取得することで、
+ * 同時に走る別トランザクションとのデッドロックを避ける。
+ */
+async function lockObligationPeriodsForHourlyCap(
+  tx: Prisma.TransactionClient,
+  userId: string,
+  periods: ObligationPeriod[],
+): Promise<void> {
+  const sorted = [...periods].sort((a, b) => a.start.getTime() - b.start.getTime());
+  for (const period of sorted) {
+    const periodLockKey = Math.trunc(period.start.getTime() / (1000 * 60 * 60 * 24));
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${userId}:hourly-cap`}), ${periodLockKey})`;
+  }
+}
+
+/** 該当する全期間について、時間単位年休の上限(40時間)を超えないか判定する */
+async function assertWithinHourlyCap(
+  tx: Prisma.TransactionClient,
+  userId: string,
+  periods: ObligationPeriod[],
+  newHours: number,
+  statuses: LeaveRequestStatus[],
+  excludeRequestId?: string,
+): Promise<void> {
+  for (const period of periods) {
+    const existingRequests = await tx.leaveRequest.findMany({
+      where: {
+        userId,
+        unit: LeaveUnit.hourly,
+        status: { in: statuses },
+        targetDate: { gte: period.start, lte: period.end },
+        ...(excludeRequestId ? { id: { not: excludeRequestId } } : {}),
+      },
+      select: { hours: true },
+    });
+    const existingHours = existingRequests.reduce((sum, request) => sum + (request.hours ?? 0), 0);
+    const check = checkHourlyCap(existingHours, newHours);
+    if (!check.ok) {
+      throw new ExceedsHourlyAnnualCapError();
+    }
+  }
+}
+
+/**
+ * hoursが時間単位年休として有効(1〜8の整数)であることを検証する。DBにCHECK制約を
+ * 置かない設計方針のため、作成時だけでなく承認時にも必ずこの検証を通す必要がある
+ * (直接DB操作等でcreateLeaveRequestの検証を経ずに作られたレコードを承認時に弾くため)。
+ */
+function assertValidHourlyHours(hours: number | null): number {
+  if (hours === null || !Number.isInteger(hours) || hours < 1 || hours > STANDARD_DAILY_HOURS) {
+    throw new InvalidHourlyRequestError();
+  }
+  return hours;
+}
+
+/**
+ * spec.md 6章-2: 重複申請・1日合計1.0日超過チェックを行った上で申請を作成する。
+ * unit = hourly の場合はhours(1〜8の整数)が必須で、義務期間内の時間単位上限(40時間)も
+ * 満たす必要がある(Phase 4)。
+ */
 export async function createLeaveRequest(input: {
   userId: string;
   targetDate: Date;
   unit: LeaveUnit;
+  hours?: number | null;
 }): Promise<LeaveRequest> {
+  const hours = input.unit === LeaveUnit.hourly ? (input.hours ?? null) : null;
+  if (input.unit === LeaveUnit.hourly) {
+    assertValidHourlyHours(hours);
+  }
+
   return prisma.$transaction(async (tx) => {
+    if (input.unit === LeaveUnit.hourly) {
+      const periods = await findObligationPeriodsForDate(tx, input.userId, input.targetDate);
+      if (periods.length === 0) {
+        throw new HourlyLeaveOutsideObligationPeriodError();
+      }
+      await lockObligationPeriodsForHourlyCap(tx, input.userId, periods);
+      await assertWithinHourlyCap(tx, input.userId, periods, hours as number, [
+        LeaveRequestStatus.pending,
+        LeaveRequestStatus.approved,
+      ]);
+    }
+
     const targetDateLockKey = Math.trunc(input.targetDate.getTime() / (1000 * 60 * 60 * 24));
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${input.userId}), ${targetDateLockKey})`;
 
@@ -32,13 +149,10 @@ export async function createLeaveRequest(input: {
         targetDate: input.targetDate,
         status: { in: [LeaveRequestStatus.pending, LeaveRequestStatus.approved] },
       },
-      select: { unit: true },
+      select: { unit: true, hours: true },
     });
 
-    const check = checkNewRequest(
-      existing.map((request) => request.unit),
-      input.unit,
-    );
+    const check = checkNewRequest(existing, input.unit, hours);
     if (!check.ok) {
       throw check.reason === "duplicate_unit"
         ? new DuplicateRequestError()
@@ -50,6 +164,7 @@ export async function createLeaveRequest(input: {
         userId: input.userId,
         targetDate: input.targetDate,
         unit: input.unit,
+        hours,
       },
     });
   });
@@ -139,7 +254,34 @@ export async function approveLeaveRequest(input: { requestId: string; reviewerId
 
   const asOf = startOfTodayUTC();
 
+  // hourlyの場合、承認時にもhoursの妥当性を再検証する(DBにCHECK制約を置かない設計のため、
+  // 直接DB操作等でcreateLeaveRequestの検証を経ずに作られたレコード(hours=null/範囲外)を
+  // 承認できてしまわないようにする。Codexレビューのmust-fix)。以降このvalidatedHoursを使う。
+  const validatedHours = request.unit === LeaveUnit.hourly ? assertValidHourlyHours(request.hours) : null;
+
   await prisma.$transaction(async (tx) => {
+    if (request.unit === LeaveUnit.hourly) {
+      // 作成時から承認時までの間に同じ義務期間内の他の時間単位申請が承認・取消される
+      // 可能性があるため、承認時にも上限を再チェックする(Phase 4のmust-fix対応)。
+      // このチェックは申請ステータスをapprovedに更新する前に行う。承認対象自身は
+      // まだpendingのため通常はapprovedのみを対象にした集計に紛れ込まないが、
+      // 同一申請への二重承認レース時にもエラー種別が安定するよう明示的に除外する
+      // (should-fix対応)。
+      const periods = await findObligationPeriodsForDate(tx, request.userId, request.targetDate);
+      if (periods.length === 0) {
+        throw new HourlyLeaveOutsideObligationPeriodError();
+      }
+      await lockObligationPeriodsForHourlyCap(tx, request.userId, periods);
+      await assertWithinHourlyCap(
+        tx,
+        request.userId,
+        periods,
+        validatedHours as number,
+        [LeaveRequestStatus.approved],
+        request.id,
+      );
+    }
+
     const claimed = await tx.leaveRequest.updateMany({
       where: { id: input.requestId, status: LeaveRequestStatus.pending },
       data: {
@@ -173,7 +315,7 @@ export async function approveLeaveRequest(input: { requestId: string; reviewerId
     });
 
     // 残高不足の場合は InsufficientBalanceError を投げ、トランザクション全体をロールバックする
-    const plan = planFefoConsumption(grantBalances, unitToDays(request.unit));
+    const plan = planFefoConsumption(grantBalances, unitToDays(request.unit, validatedHours));
 
     await tx.leaveConsumption.createMany({
       data: plan.map((item) => ({

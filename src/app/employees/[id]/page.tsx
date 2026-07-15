@@ -186,7 +186,10 @@ export default async function EmployeeDetailPage({
               {visibleRequests.map((request) => (
                 <tr key={request.id} className="border-b border-gray-100 last:border-0">
                   <td className="py-2 text-gray-900">{formatDate(request.targetDate)}</td>
-                  <td className="py-2 text-gray-700">{UNIT_LABELS[request.unit]}</td>
+                  <td className="py-2 text-gray-700">
+                    {UNIT_LABELS[request.unit]}
+                    {request.unit === "hourly" && request.hours != null ? `(${request.hours}時間)` : ""}
+                  </td>
                   <td className="py-2">
                     <span
                       className={`rounded-full px-2 py-1 text-xs font-medium ${STATUS_BADGE_CLASSES[request.status]}`}

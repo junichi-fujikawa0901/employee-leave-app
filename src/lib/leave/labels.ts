@@ -5,6 +5,7 @@ export const UNIT_LABELS: Record<LeaveUnit, string> = {
   full_day: "全休",
   am_half: "午前半休",
   pm_half: "午後半休",
+  hourly: "時間単位",
 };
 
 export const STATUS_LABELS: Record<LeaveRequestStatus, string> = {

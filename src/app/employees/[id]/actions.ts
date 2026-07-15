@@ -19,7 +19,12 @@ export interface ActionState {
 }
 
 function isValidUnit(value: FormDataEntryValue | null): value is LeaveUnit {
-  return value === LeaveUnit.full_day || value === LeaveUnit.am_half || value === LeaveUnit.pm_half;
+  return (
+    value === LeaveUnit.full_day ||
+    value === LeaveUnit.am_half ||
+    value === LeaveUnit.pm_half ||
+    value === LeaveUnit.hourly
+  );
 }
 
 function revalidateEmployeePages(employeeId: string): void {
@@ -40,6 +45,7 @@ export async function submitLeaveRequestAction(
 
     const targetDateValue = formData.get("targetDate");
     const unitValue = formData.get("unit");
+    const hoursValue = formData.get("hours");
 
     if (typeof targetDateValue !== "string" || !targetDateValue) {
       return { error: "対象日を入力してください" };
@@ -48,10 +54,20 @@ export async function submitLeaveRequestAction(
       return { error: "区分を選択してください" };
     }
 
+    let hours: number | null = null;
+    if (unitValue === LeaveUnit.hourly) {
+      const parsed = typeof hoursValue === "string" ? Number(hoursValue) : NaN;
+      if (!Number.isFinite(parsed)) {
+        return { error: "時間数を入力してください" };
+      }
+      hours = parsed;
+    }
+
     await createLeaveRequest({
       userId: employeeId,
       targetDate: new Date(`${targetDateValue}T00:00:00.000Z`),
       unit: unitValue,
+      hours,
     });
   } catch (error) {
     if (error instanceof ActionError || error instanceof DomainError) {
