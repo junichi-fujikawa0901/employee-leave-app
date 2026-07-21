@@ -92,12 +92,15 @@ export default async function EmployeeDetailPage({
 
       <div className="flex items-start justify-between">
         <div>
-          <h1 className="text-xl font-semibold text-gray-900">
-            {employee.name}
-            {employee.status === "terminated" && (
-              <span className="ml-2 text-sm font-normal text-gray-400">(退職済み)</span>
-            )}
-          </h1>
+          <div className="w-fit">
+            <h1 className="text-2xl font-bold text-gray-900">
+              {employee.name}
+              {employee.status === "terminated" && (
+                <span className="ml-2 text-sm font-normal text-gray-400">(退職済み)</span>
+              )}
+            </h1>
+            <span className="mt-2 mb-1 block h-1 w-full bg-brand-accent" aria-hidden="true" />
+          </div>
           <p className="text-sm text-gray-500">{employee.email}</p>
           <p className="text-sm text-gray-500">入社日: {formatDate(employee.hireDate)}</p>
         </div>
@@ -105,13 +108,13 @@ export default async function EmployeeDetailPage({
           <div className="flex gap-2">
             <a
               href={`/api/employees/${employee.id}/leave-ledger`}
-              className="rounded border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700"
+              className="rounded border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50"
             >
               年次有給休暇管理簿を出力(Excel)
             </a>
             <Link
               href={`/employees/${employee.id}/edit`}
-              className="rounded border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700"
+              className="rounded border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50"
             >
               社員情報を編集・退職処理
             </Link>
@@ -202,7 +205,7 @@ export default async function EmployeeDetailPage({
                 href={`/employees/${employee.id}`}
                 className={`rounded px-2 py-1 text-xs font-medium ${
                   selectedYear === null
-                    ? "bg-gray-900 text-white"
+                    ? "bg-brand-navy text-white"
                     : "border border-gray-300 text-gray-600 hover:bg-gray-50"
                 }`}
               >
@@ -214,7 +217,7 @@ export default async function EmployeeDetailPage({
                   href={`/employees/${employee.id}?year=${year}`}
                   className={`rounded px-2 py-1 text-xs font-medium ${
                     selectedYear === year
-                      ? "bg-gray-900 text-white"
+                      ? "bg-brand-navy text-white"
                       : "border border-gray-300 text-gray-600 hover:bg-gray-50"
                   }`}
                 >

@@ -58,7 +58,7 @@ export function AutoGrantPanel() {
           type="button"
           onClick={handlePreview}
           disabled={isPreviewPending}
-          className="rounded border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 disabled:opacity-50"
+          className="rounded bg-brand-navy px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-brand-navy-light disabled:opacity-50"
         >
           {isPreviewPending ? "確認中..." : "本日時点の付与を確認する"}
         </button>
@@ -140,7 +140,7 @@ export function AutoGrantPanel() {
         <button
           type="submit"
           disabled={isConfirmPending}
-          className="rounded bg-gray-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+          className="rounded bg-brand-navy px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-brand-navy-light disabled:opacity-50"
         >
           {isConfirmPending ? "実行中..." : "この内容で付与を実行する"}
         </button>

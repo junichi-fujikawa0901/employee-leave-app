@@ -32,7 +32,10 @@ export default async function EditEmployeePage({
         ← 詳細画面に戻る
       </Link>
 
-      <h1 className="text-xl font-semibold text-gray-900">{employee.name} さんの管理</h1>
+      <div className="w-fit">
+        <h1 className="text-2xl font-bold text-gray-900">{employee.name} さんの管理</h1>
+        <span className="mt-2 block h-1 w-full bg-brand-accent" aria-hidden="true" />
+      </div>
 
       <EditEmployeeForm
         employeeId={employee.id}

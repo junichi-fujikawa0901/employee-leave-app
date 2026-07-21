@@ -19,10 +19,13 @@ export default async function EmployeesPage() {
   return (
     <div className="mx-auto max-w-4xl space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold text-gray-900">社員一覧</h1>
+        <div className="w-fit">
+          <h1 className="text-2xl font-bold text-gray-900">社員一覧</h1>
+          <span className="mt-2 block h-1 w-full bg-brand-accent" aria-hidden="true" />
+        </div>
         <Link
           href="/employees/new"
-          className="rounded bg-gray-900 px-4 py-2 text-sm font-medium text-white"
+          className="rounded bg-brand-navy px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-brand-navy-light"
         >
           社員を新規登録
         </Link>

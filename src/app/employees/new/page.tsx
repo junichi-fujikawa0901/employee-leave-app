@@ -14,7 +14,10 @@ export default async function NewEmployeePage() {
         ← 社員一覧に戻る
       </Link>
 
-      <h1 className="text-xl font-semibold text-gray-900">社員の新規登録</h1>
+      <div className="w-fit">
+        <h1 className="text-2xl font-bold text-gray-900">社員の新規登録</h1>
+        <span className="mt-2 block h-1 w-full bg-brand-accent" aria-hidden="true" />
+      </div>
       <NewEmployeeForm />
     </div>
   );

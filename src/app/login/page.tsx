@@ -34,12 +34,18 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-gray-50 px-4">
+    <div className="flex min-h-screen items-center justify-center bg-brand-navy px-4">
       <form
         onSubmit={handleSubmit}
-        className="w-full max-w-sm space-y-4 rounded-lg bg-white p-8 shadow"
+        className="w-full max-w-sm space-y-5 rounded-lg bg-white p-8 shadow-xl"
       >
-        <h1 className="text-xl font-semibold text-gray-900">ログイン</h1>
+        <div className="space-y-2">
+          <div className="w-fit">
+            <h1 className="text-xl font-bold text-gray-900">有給休暇管理アプリ</h1>
+            <span className="mt-2 block h-1 w-full bg-brand-accent" aria-hidden="true" />
+          </div>
+          <p className="text-sm text-gray-500">ログインしてください</p>
+        </div>
 
         <div className="space-y-1">
           <label htmlFor="email" className="block text-sm font-medium text-gray-700">
@@ -51,7 +57,7 @@ export default function LoginPage() {
             required
             value={email}
             onChange={(event) => setEmail(event.target.value)}
-            className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
+            className="w-full rounded border border-gray-300 px-3 py-2 text-sm focus:border-brand-accent focus:outline-none focus:ring-1 focus:ring-brand-accent"
           />
         </div>
 
@@ -65,7 +71,7 @@ export default function LoginPage() {
             required
             value={password}
             onChange={(event) => setPassword(event.target.value)}
-            className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
+            className="w-full rounded border border-gray-300 px-3 py-2 text-sm focus:border-brand-accent focus:outline-none focus:ring-1 focus:ring-brand-accent"
           />
         </div>
 
@@ -74,7 +80,7 @@ export default function LoginPage() {
         <button
           type="submit"
           disabled={isSubmitting}
-          className="w-full rounded bg-gray-900 px-3 py-2 text-sm font-medium text-white disabled:opacity-50"
+          className="w-full rounded bg-brand-navy px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-brand-navy-light disabled:opacity-50"
         >
           {isSubmitting ? "ログイン中..." : "ログイン"}
         </button>

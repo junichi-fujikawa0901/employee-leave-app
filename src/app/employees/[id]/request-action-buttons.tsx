@@ -46,7 +46,7 @@ export function CancelRequestButton({
         <button
           type="submit"
           disabled={isPending}
-          className="rounded bg-gray-900 px-3 py-1 text-xs font-medium text-white disabled:opacity-50"
+          className="rounded bg-brand-navy px-3 py-1 text-xs font-medium text-white transition-colors hover:bg-brand-navy-light disabled:opacity-50"
         >
           取消を確定
         </button>
@@ -97,7 +97,7 @@ export function WithdrawRequestButton({
         <button
           type="submit"
           disabled={isPending}
-          className="rounded bg-gray-900 px-3 py-1 text-xs font-medium text-white disabled:opacity-50"
+          className="rounded bg-brand-navy px-3 py-1 text-xs font-medium text-white transition-colors hover:bg-brand-navy-light disabled:opacity-50"
         >
           取り下げを確定
         </button>

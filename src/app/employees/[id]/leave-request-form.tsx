@@ -27,7 +27,7 @@ export function LeaveRequestForm({ employeeId }: { employeeId: string }) {
             type="button"
             onClick={() => setMode("single")}
             className={`rounded px-2 py-1 font-medium ${
-              mode === "single" ? "bg-gray-900 text-white" : "border border-gray-300 text-gray-600"
+              mode === "single" ? "bg-brand-navy text-white" : "border border-gray-300 text-gray-600"
             }`}
           >
             1日ずつ申請
@@ -36,7 +36,7 @@ export function LeaveRequestForm({ employeeId }: { employeeId: string }) {
             type="button"
             onClick={() => setMode("batch")}
             className={`rounded px-2 py-1 font-medium ${
-              mode === "batch" ? "bg-gray-900 text-white" : "border border-gray-300 text-gray-600"
+              mode === "batch" ? "bg-brand-navy text-white" : "border border-gray-300 text-gray-600"
             }`}
           >
             期間でまとめて申請
@@ -105,7 +105,7 @@ function SingleDayForm({ employeeId }: { employeeId: string }) {
         <button
           type="submit"
           disabled={isPending}
-          className="rounded bg-gray-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+          className="rounded bg-brand-navy px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-brand-navy-light disabled:opacity-50"
         >
           {isPending ? "申請中..." : "申請する"}
         </button>
@@ -181,7 +181,7 @@ function BatchForm({ employeeId }: { employeeId: string }) {
         <button
           type="submit"
           disabled={isPending || previewDates.length === 0 || exceedsLimit}
-          className="rounded bg-gray-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+          className="rounded bg-brand-navy px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-brand-navy-light disabled:opacity-50"
         >
           {isPending ? "申請中..." : "まとめて申請する"}
         </button>
