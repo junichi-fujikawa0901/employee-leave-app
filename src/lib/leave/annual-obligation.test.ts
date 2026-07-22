@@ -3,7 +3,9 @@ import {
   getObligationPeriods,
   computeObligationStatus,
   selectPriorityObligation,
+  isRecentlyOverdue,
   AT_RISK_THRESHOLD_DAYS,
+  OVERDUE_DISPLAY_WINDOW_DAYS,
   type ObligationPeriod,
   type ObligationPeriodStatus,
 } from "@/lib/leave/annual-obligation";
@@ -70,27 +72,32 @@ describe("getObligationPeriods", () => {
 describe("computeObligationStatus", () => {
   const period: ObligationPeriod = { start: utc(2024, 7, 1), end: utc(2025, 6, 30), baseGrantDays: 10 };
 
-  it("取得済みが0日ならremaining=5、期限に十分余裕があればbehind", () => {
+  it("取得済みが0日ならremaining=5、期限に十分余裕があればon_track", () => {
     const result = computeObligationStatus(0, 0, period, utc(2024, 8, 1));
     expect(result.remaining).toBe(5);
-    expect(result.status).toBe("behind");
+    expect(result.status).toBe("on_track");
   });
 
   it(`期限ちょうど${AT_RISK_THRESHOLD_DAYS}日前はat_risk`, () => {
-    const asOf = utc(2025, 4, 1); // 2025-06-30の90日前
+    const asOf = utc(2025, 5, 1); // 2025-06-30の60日前
     const result = computeObligationStatus(0, 0, period, asOf);
     expect(result.status).toBe("at_risk");
   });
 
-  it(`期限${AT_RISK_THRESHOLD_DAYS + 1}日前はbehind`, () => {
-    const asOf = utc(2025, 3, 31); // 2025-06-30の91日前
+  it(`期限${AT_RISK_THRESHOLD_DAYS + 1}日前はon_track`, () => {
+    const asOf = utc(2025, 4, 30); // 2025-06-30の61日前
     const result = computeObligationStatus(0, 0, period, asOf);
-    expect(result.status).toBe("behind");
+    expect(result.status).toBe("on_track");
   });
 
-  it("期限を過ぎていて未達ならat_risk(期限超過も含む)", () => {
+  it("期限当日はまだat_risk(期限を過ぎていない)", () => {
+    const result = computeObligationStatus(0, 0, period, utc(2025, 6, 30));
+    expect(result.status).toBe("at_risk");
+  });
+
+  it("期限を過ぎていて未達ならoverdue", () => {
     const result = computeObligationStatus(2, 0, period, utc(2025, 7, 15));
-    expect(result.status).toBe("at_risk");
+    expect(result.status).toBe("overdue");
     expect(result.remaining).toBe(3);
   });
 
@@ -114,7 +121,7 @@ describe("computeObligationStatus", () => {
 
 describe("selectPriorityObligation", () => {
   function statusOf(
-    level: "met" | "at_risk" | "behind",
+    level: "met" | "at_risk" | "on_track" | "overdue",
     start: Date,
     deadline: Date,
   ): ObligationPeriodStatus {
@@ -135,16 +142,16 @@ describe("selectPriorityObligation", () => {
     expect(selectPriorityObligation([])).toBeNull();
   });
 
-  it("過年度behind + 当年度met の場合、過年度の未達を選ぶ", () => {
-    const pastUnmet = statusOf("behind", utc(2023, 7, 1), utc(2024, 6, 30));
+  it("過年度on_track + 当年度met の場合、過年度の未達を選ぶ", () => {
+    const pastUnmet = statusOf("on_track", utc(2023, 7, 1), utc(2024, 6, 30));
     const currentMet = statusOf("met", utc(2024, 7, 1), utc(2025, 6, 30));
     expect(selectPriorityObligation([currentMet, pastUnmet])).toBe(pastUnmet);
   });
 
-  it("過年度at_risk + 当年度behind の場合、at_riskを優先する", () => {
+  it("過年度at_risk + 当年度on_track の場合、at_riskを優先する", () => {
     const pastAtRisk = statusOf("at_risk", utc(2023, 7, 1), utc(2024, 6, 30));
-    const currentBehind = statusOf("behind", utc(2024, 7, 1), utc(2025, 6, 30));
-    expect(selectPriorityObligation([currentBehind, pastAtRisk])).toBe(pastAtRisk);
+    const currentOnTrack = statusOf("on_track", utc(2024, 7, 1), utc(2025, 6, 30));
+    expect(selectPriorityObligation([currentOnTrack, pastAtRisk])).toBe(pastAtRisk);
   });
 
   it("複数at_riskがある場合、deadlineが最も古い(=最も緊急な)ものを選ぶ", () => {
@@ -157,5 +164,39 @@ describe("selectPriorityObligation", () => {
     const older = statusOf("met", utc(2023, 7, 1), utc(2024, 6, 30));
     const newer = statusOf("met", utc(2024, 7, 1), utc(2025, 6, 30));
     expect(selectPriorityObligation([older, newer])).toBe(newer);
+  });
+
+  it("overdue(期限超過・法令違反確定)は他のどのステータスよりも最優先で選ばれる", () => {
+    const overdue = statusOf("overdue", utc(2022, 7, 1), utc(2023, 6, 30));
+    const atRisk = statusOf("at_risk", utc(2023, 7, 1), utc(2024, 6, 30));
+    const onTrack = statusOf("on_track", utc(2024, 7, 1), utc(2025, 6, 30));
+    const met = statusOf("met", utc(2025, 7, 1), utc(2026, 6, 30));
+    expect(selectPriorityObligation([atRisk, onTrack, met, overdue])).toBe(overdue);
+  });
+
+  it("複数overdueがある場合、deadlineが最も古い(=最も長期化している)ものを選ぶ", () => {
+    const older = statusOf("overdue", utc(2021, 7, 1), utc(2022, 6, 30));
+    const newer = statusOf("overdue", utc(2022, 7, 1), utc(2023, 6, 30));
+    expect(selectPriorityObligation([newer, older])).toBe(older);
+  });
+});
+
+describe("isRecentlyOverdue", () => {
+  const deadline = utc(2026, 7, 10);
+
+  it("期限当日はtrue(超過0日)", () => {
+    expect(isRecentlyOverdue(deadline, utc(2026, 7, 10))).toBe(true);
+  });
+
+  it(`期限からちょうど${OVERDUE_DISPLAY_WINDOW_DAYS}日後はtrue(境界を含む)`, () => {
+    expect(isRecentlyOverdue(deadline, utc(2026, 7, 24))).toBe(true);
+  });
+
+  it(`期限から${OVERDUE_DISPLAY_WINDOW_DAYS + 1}日後はfalse`, () => {
+    expect(isRecentlyOverdue(deadline, utc(2026, 7, 25))).toBe(false);
+  });
+
+  it("期限がまだ来ていない(未来)場合はfalse", () => {
+    expect(isRecentlyOverdue(deadline, utc(2026, 7, 9))).toBe(false);
   });
 });

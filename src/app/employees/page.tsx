@@ -64,14 +64,23 @@ export default async function EmployeesPage() {
                     : "-"}
                 </td>
                 <td className="px-4 py-3 text-gray-700">
-                  {employee.obligation ? (
+                  {employee.obligation &&
+                  (employee.obligation.status !== "overdue" || employee.obligation.isRecentlyOverdue) ? (
                     <div className="flex flex-col gap-1">
-                      <span
-                        className={`w-fit rounded-full px-2 py-1 text-xs font-medium ${OBLIGATION_STATUS_BADGE_CLASSES[employee.obligation.status]}`}
-                      >
-                        {OBLIGATION_STATUS_LABELS[employee.obligation.status]} 残{employee.obligation.remaining}
-                        日(期限 {formatDate(employee.obligation.deadline)})
-                      </span>
+                      {employee.obligation.status === "on_track" ? (
+                        <span>
+                          取得義務残{employee.obligation.remaining}日(義務期限{" "}
+                          {formatDate(employee.obligation.deadline)})
+                        </span>
+                      ) : (
+                        <span
+                          className={`w-fit rounded-full px-2 py-1 text-xs font-medium ${OBLIGATION_STATUS_BADGE_CLASSES[employee.obligation.status]}`}
+                        >
+                          {OBLIGATION_STATUS_LABELS[employee.obligation.status]} 取得義務残
+                          {employee.obligation.remaining}日(義務期限 {formatDate(employee.obligation.deadline)}
+                          {employee.obligation.status === "overdue" && "を経過済み"})
+                        </span>
+                      )}
                       {employee.obligation.otherUnmetCount > 0 && (
                         <span className="text-xs text-gray-400">
                           ほか{employee.obligation.otherUnmetCount}件未達

@@ -10,6 +10,7 @@ import { decimalToNumber as toNumber } from "@/lib/decimal";
 import {
   computeObligationStatus,
   getObligationPeriods,
+  isRecentlyOverdue,
   type ObligationPeriod,
   type ObligationPeriodStatus,
   type ObligationStatusLevel,
@@ -22,8 +23,13 @@ import { prisma } from "@/lib/prisma";
 
 export interface AnnualObligation {
   current: ObligationPeriodStatus | null;
-  /** current以外にmet以外(未達)の期間がいくつあるか */
+  /** current以外に未達(met以外)の期間がいくつあるか */
   otherUnmetCount: number;
+  /**
+   * currentの義務期間内に、算定対象外の時間単位年休(取得済み/取得予定いずれか)が1件でもあるか。
+   * 取得済み日数が実態(取得履歴)より少なく見える理由をUI側で説明するために使う。
+   */
+  hasExcludedHourlyRequests: boolean;
 }
 
 /**
@@ -36,21 +42,24 @@ function buildAnnualObligation(
   asOf: Date,
 ): AnnualObligation {
   if (periods.length === 0) {
-    return { current: null, otherUnmetCount: 0 };
+    return { current: null, otherUnmetCount: 0, hasExcludedHourlyRequests: false };
   }
 
   const normalizedAsOf = toUtcMidnight(asOf);
+  const hourlyExclusionByPeriod = new Map<ObligationPeriod, boolean>();
   const periodStatuses: ObligationPeriodStatus[] = periods.map((period) => {
     let taken = 0;
     let planned = 0;
+    let hasExcludedHourlyRequests = false;
     for (const request of requests) {
-      // 時間単位年休(Phase 4)は年5日取得義務の算定に含まれない(労基法上、時間単位年休は
-      // 年5日取得義務の取得済み・取得予定いずれにもカウントしない)。
-      if (request.unit === LeaveUnit.hourly) {
-        continue;
-      }
       const time = request.targetDate.getTime();
       if (time < period.start.getTime() || time > period.end.getTime()) {
+        continue;
+      }
+      // 時間単位年休(Phase 4)は年5日取得義務の算定に含まれない(労基法上、時間単位年休は
+      // 取得時間に関わらず、年5日取得義務の取得済み・取得予定いずれにもカウントしない)。
+      if (request.unit === LeaveUnit.hourly) {
+        hasExcludedHourlyRequests = true;
         continue;
       }
       if (time <= normalizedAsOf.getTime()) {
@@ -59,6 +68,7 @@ function buildAnnualObligation(
         planned += unitToDays(request.unit);
       }
     }
+    hourlyExclusionByPeriod.set(period, hasExcludedHourlyRequests);
     return { period, status: computeObligationStatus(taken, planned, period, asOf) };
   });
 
@@ -66,8 +76,11 @@ function buildAnnualObligation(
   const otherUnmetCount = periodStatuses.filter(
     (ps) => ps !== current && ps.status.status !== "met",
   ).length;
+  const hasExcludedHourlyRequests = current
+    ? (hourlyExclusionByPeriod.get(current.period) ?? false)
+    : false;
 
-  return { current, otherUnmetCount };
+  return { current, otherUnmetCount, hasExcludedHourlyRequests };
 }
 
 /** 社員一覧・詳細画面用。義務期間が無い(義務対象外)社員はnull */
@@ -84,7 +97,7 @@ export async function getAnnualObligation(
     asOf,
   );
   if (periods.length === 0) {
-    return { current: null, otherUnmetCount: 0 };
+    return { current: null, otherUnmetCount: 0, hasExcludedHourlyRequests: false };
   }
 
   const minStart = periods[0].start;
@@ -101,6 +114,11 @@ export async function getAnnualObligation(
   return buildAnnualObligation(periods, requests, asOf);
 }
 
+/** 未取消(cancelledAt: null)の消化明細から消化済み合計日数を求める共通ロジック */
+function sumConsumedDays(consumptions: { consumedDays: { toNumber(): number } }[]): number {
+  return consumptions.reduce((sum, consumption) => sum + toNumber(consumption.consumedDays), 0);
+}
+
 export async function getActiveGrantsWithRemaining(
   userId: string,
   asOf: Date = startOfTodayUTC(),
@@ -112,18 +130,12 @@ export async function getActiveGrantsWithRemaining(
     },
   });
 
-  return grants.map((grant) => {
-    const consumedTotal = grant.consumptions.reduce(
-      (sum, consumption) => sum + toNumber(consumption.consumedDays),
-      0,
-    );
-    return {
-      id: grant.id,
-      grantedDate: grant.grantedDate,
-      expireDate: grant.expireDate,
-      remainingDays: toNumber(grant.grantedDays) - consumedTotal,
-    };
-  });
+  return grants.map((grant) => ({
+    id: grant.id,
+    grantedDate: grant.grantedDate,
+    expireDate: grant.expireDate,
+    remainingDays: toNumber(grant.grantedDays) - sumConsumedDays(grant.consumptions),
+  }));
 }
 
 export async function getRemainingBalance(
@@ -145,6 +157,8 @@ export interface EmployeeObligationSummary {
   deadline: Date;
   status: ObligationStatusLevel;
   otherUnmetCount: number;
+  /** status==="overdue"のとき、期限超過からOVERDUE_DISPLAY_WINDOW_DAYS以内かどうか(社員一覧での表示要否判定に使う) */
+  isRecentlyOverdue: boolean;
 }
 
 export interface EmployeeSummary {
@@ -189,11 +203,7 @@ export async function getEmployeeSummaries(): Promise<EmployeeSummary[]> {
 
   const remainingByUser = new Map<string, number>();
   for (const grant of grants) {
-    const consumedTotal = grant.consumptions.reduce(
-      (sum, consumption) => sum + toNumber(consumption.consumedDays),
-      0,
-    );
-    const remaining = toNumber(grant.grantedDays) - consumedTotal;
+    const remaining = toNumber(grant.grantedDays) - sumConsumedDays(grant.consumptions);
     remainingByUser.set(grant.userId, (remainingByUser.get(grant.userId) ?? 0) + remaining);
   }
 
@@ -256,7 +266,6 @@ export async function getEmployeeSummaries(): Promise<EmployeeSummary[]> {
 
   return users.map((user) => {
     const obligation = obligationByUser.get(user.id);
-    const current = obligation?.current;
     return {
       id: user.id,
       name: user.name,
@@ -267,13 +276,14 @@ export async function getEmployeeSummaries(): Promise<EmployeeSummary[]> {
         user.status === UserStatus.active ? getNextGrantYearMonth(user.hireDate, asOf) : null,
       hasPendingRequest: pendingUserIds.has(user.id),
       obligation:
-        obligation && current
+        obligation && obligation.current
           ? {
-              start: current.period.start,
-              remaining: current.status.remaining,
-              deadline: current.status.deadline,
-              status: current.status.status,
+              start: obligation.current.period.start,
+              remaining: obligation.current.status.remaining,
+              deadline: obligation.current.status.deadline,
+              status: obligation.current.status.status,
               otherUnmetCount: obligation.otherUnmetCount,
+              isRecentlyOverdue: isRecentlyOverdue(obligation.current.status.deadline, asOf),
             }
           : null,
     };
@@ -337,6 +347,7 @@ export interface GrantHistoryItem {
   grantedDate: Date;
   grantedDays: number;
   expireDate: Date;
+  remainingDays: number;
 }
 
 export interface RequestHistoryItem {
@@ -393,13 +404,10 @@ async function getRemainingDaysAsOf(userId: string, asOf: Date): Promise<number>
       },
     },
   });
-  return grants.reduce((total, grant) => {
-    const consumedTotal = grant.consumptions.reduce(
-      (sum, consumption) => sum + toNumber(consumption.consumedDays),
-      0,
-    );
-    return total + (toNumber(grant.grantedDays) - consumedTotal);
-  }, 0);
+  return grants.reduce(
+    (total, grant) => total + (toNumber(grant.grantedDays) - sumConsumedDays(grant.consumptions)),
+    0,
+  );
 }
 
 export interface LeaveLedgerEntry {
@@ -520,6 +528,9 @@ export async function getEmployeeDetail(userId: string): Promise<EmployeeDetail 
     prisma.leaveGrant.findMany({
       where: { userId },
       orderBy: [{ expireDate: "asc" }, { grantedDate: "asc" }, { id: "asc" }],
+      include: {
+        consumptions: { where: { cancelledAt: null }, select: { consumedDays: true } },
+      },
     }),
     prisma.leaveRequest.findMany({
       where: { userId },
@@ -546,6 +557,7 @@ export async function getEmployeeDetail(userId: string): Promise<EmployeeDetail 
       grantedDate: grant.grantedDate,
       grantedDays: toNumber(grant.grantedDays),
       expireDate: grant.expireDate,
+      remainingDays: toNumber(grant.grantedDays) - sumConsumedDays(grant.consumptions),
     })),
     requests: requests.map((request) => ({
       id: request.id,

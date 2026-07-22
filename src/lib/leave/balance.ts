@@ -1,3 +1,5 @@
+import { toUtcMidnight } from "@/lib/date/calendar";
+
 export interface GrantBalanceInput {
   id: string;
   grantedDate: Date;
@@ -19,6 +21,36 @@ export class InsufficientBalanceError extends Error {
 
 export function isGrantActive(expireDate: Date, asOf: Date): boolean {
   return expireDate.getTime() >= asOf.getTime();
+}
+
+export const GRANT_EXPIRY_WARNING_DAYS = 90;
+
+export type GrantExpiryStatusLevel = "expired" | "at_risk" | "normal";
+
+/**
+ * remainingDays <= 0(消化済み/未消化分なし。負値はデータ異常だが同様にnormal扱い)は
+ * 警告不要としてnormal扱い。未消化分が残っているのに失効日を過ぎている場合のみexpired
+ * (切り捨てられた日数がある、という記録上の注意喚起)。失効前でGRANT_EXPIRY_WARNING_DAYS
+ * 日以内ならat_risk。asOfはUTC0時に正規化してから比較する
+ * (annual-obligation.tsのcomputeObligationStatusと同じ方針。isGrantActive自体は単純な
+ * 時刻比較なので、非正規化のasOfをそのまま渡すと失効日当日の判定がズレうる)。
+ */
+export function computeGrantExpiryStatus(
+  remainingDays: number,
+  expireDate: Date,
+  asOf: Date,
+): GrantExpiryStatusLevel {
+  if (remainingDays <= 0) {
+    return "normal";
+  }
+  const normalizedAsOf = toUtcMidnight(asOf);
+  if (!isGrantActive(expireDate, normalizedAsOf)) {
+    return "expired";
+  }
+  const daysUntilExpire = Math.floor(
+    (expireDate.getTime() - normalizedAsOf.getTime()) / (1000 * 60 * 60 * 24),
+  );
+  return daysUntilExpire <= GRANT_EXPIRY_WARNING_DAYS ? "at_risk" : "normal";
 }
 
 /** spec.md 5.2 FEFO: 失効日昇順 → 付与日昇順 → ID昇順 */

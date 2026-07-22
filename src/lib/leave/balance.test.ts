@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
+  computeGrantExpiryStatus,
   isGrantActive,
   sortFefo,
   sumRemaining,
@@ -120,5 +121,39 @@ describe("planFefoConsumption", () => {
       { grantId: "g1", consumedDays: 0.5 },
       { grantId: "g2", consumedDays: 0.5 },
     ]);
+  });
+});
+
+describe("computeGrantExpiryStatus", () => {
+  it("remainingDaysが0ならnormal(消化済みは警告不要)", () => {
+    expect(computeGrantExpiryStatus(0, utc(2025, 6, 30), utc(2025, 6, 1))).toBe("normal");
+  });
+
+  it("remainingDaysが負値(データ異常)でもnormal扱い", () => {
+    expect(computeGrantExpiryStatus(-1, utc(2025, 6, 30), utc(2025, 6, 1))).toBe("normal");
+  });
+
+  it("remainingDaysが残っていて失効日を過ぎていればexpired", () => {
+    expect(computeGrantExpiryStatus(3, utc(2025, 6, 29), utc(2025, 6, 30))).toBe("expired");
+  });
+
+  it("失効日ちょうど90日前はat_risk(境界を含む)", () => {
+    // 2025-06-30 の90日前 = 2025-04-01
+    expect(computeGrantExpiryStatus(3, utc(2025, 6, 30), utc(2025, 4, 1))).toBe("at_risk");
+  });
+
+  it("失効日91日以上前はnormal", () => {
+    expect(computeGrantExpiryStatus(3, utc(2025, 6, 30), utc(2025, 3, 31))).toBe("normal");
+  });
+
+  it("失効日当日でremainingDaysが残っていればat_risk", () => {
+    expect(computeGrantExpiryStatus(3, utc(2025, 6, 30), utc(2025, 6, 30))).toBe("at_risk");
+  });
+
+  it("非UTC0時のasOfを渡しても、UTC0時に正規化してから判定される(境界がズレない)", () => {
+    const nonMidnightAsOf = new Date(Date.UTC(2025, 5, 30, 15, 30));
+    // 正規化すればexpireDateと同日なのでまだ有効(=at_risk)。正規化しなければ
+    // expireDate(00:00)がasOf(15:30)より前に見えて誤ってexpiredになってしまう。
+    expect(computeGrantExpiryStatus(3, utc(2025, 6, 30), nonMidnightAsOf)).toBe("at_risk");
   });
 });

@@ -110,9 +110,9 @@ afterEach(async () => {
 });
 
 describe("getAnnualObligation", () => {
-  it("過年度の未達期間と当年度のmet期間がある場合、currentは過年度の未達を指し、当年度分はotherUnmetCountに数えない", async () => {
+  it("過年度の未達期間が既に期限超過(overdue)で当年度がmetの場合、overdueが最優先でcurrentに選ばれる(法令違反は隠さない)", async () => {
     const user = await createTestUser(utc(2022, 1, 1));
-    await createAnnualAutoGrant(user.id, utc(2023, 7, 1), 10); // 2023-07-01〜2024-06-30、未達のまま
+    await createAnnualAutoGrant(user.id, utc(2023, 7, 1), 10); // 2023-07-01〜2024-06-30、未達のまま期限超過(overdue)
     await createAnnualAutoGrant(user.id, utc(2024, 7, 1), 11); // 2024-07-01〜2025-06-30、5日取得してmetにする
 
     for (const day of [1, 2, 3, 4, 5]) {
@@ -123,20 +123,33 @@ describe("getAnnualObligation", () => {
 
     expect(result.current).not.toBeNull();
     expect(result.current?.period.start).toEqual(utc(2023, 7, 1));
-    expect(result.current?.status.status).not.toBe("met");
+    expect(result.current?.status.status).toBe("overdue");
     expect(result.otherUnmetCount).toBe(0);
   });
 
-  it("未達期間が2件ある場合、より緊急な方(at_risk)がcurrentに選ばれ、残り1件がotherUnmetCountに数えられる", async () => {
-    const user = await createTestUser(utc(2020, 1, 1));
-    await createAnnualAutoGrant(user.id, utc(2022, 7, 1), 10); // 2022-07-01〜2023-06-30、期限を大幅に過ぎている(at_risk)
-    await createAnnualAutoGrant(user.id, utc(2024, 7, 1), 11); // 2024-07-01〜2025-06-30、まだ期限に余裕がある(behind)
+  it("未達期間が2件ある場合、より緊急な方(at_risk)がcurrentに選ばれ、残り1件(on_track)がotherUnmetCountに数えられる", async () => {
+    const user = await createTestUser(utc(2019, 1, 1));
+    await createAnnualAutoGrant(user.id, utc(2021, 1, 1), 10); // 2021-01-01〜2021-12-31、期限まであと46日(at_risk)
+    await createAnnualAutoGrant(user.id, utc(2021, 6, 1), 11); // 2021-06-01〜2022-05-31、まだ期限に余裕がある(on_track)
+
+    const result = await getAnnualObligation(user.id, utc(2021, 11, 15));
+
+    expect(result.current).not.toBeNull();
+    expect(result.current?.period.start).toEqual(utc(2021, 1, 1));
+    expect(result.current?.status.status).toBe("at_risk");
+    expect(result.otherUnmetCount).toBe(1);
+  });
+
+  it("全期間がoverdue(期限超過)の場合、最も古い(最も長期化している)期間がcurrentに選ばれ、残りはotherUnmetCountに数えられる", async () => {
+    const user = await createTestUser(utc(2018, 1, 1));
+    await createAnnualAutoGrant(user.id, utc(2020, 1, 1), 10); // 2020-01-01〜2020-12-31、未達のまま期限超過
+    await createAnnualAutoGrant(user.id, utc(2021, 1, 1), 11); // 2021-01-01〜2021-12-31、こちらも未達のまま期限超過
 
     const result = await getAnnualObligation(user.id, utc(2025, 1, 1));
 
     expect(result.current).not.toBeNull();
-    expect(result.current?.period.start).toEqual(utc(2022, 7, 1));
-    expect(result.current?.status.status).toBe("at_risk");
+    expect(result.current?.period.start).toEqual(utc(2020, 1, 1));
+    expect(result.current?.status.status).toBe("overdue");
     expect(result.otherUnmetCount).toBe(1);
   });
 
@@ -185,6 +198,17 @@ describe("getAnnualObligation", () => {
     expect(result.current).not.toBeNull();
     expect(result.current?.status.taken).toBe(0);
     expect(result.current?.status.planned).toBe(0);
+    expect(result.hasExcludedHourlyRequests).toBe(true);
+  });
+
+  it("時間単位年休が無ければhasExcludedHourlyRequestsはfalseになる", async () => {
+    const user = await createTestUser(utc(2024, 1, 1));
+    await createAnnualAutoGrant(user.id, utc(2024, 7, 1), 10); // 2024-07-01〜2025-06-30
+    await createApprovedRequest(user.id, utc(2024, 8, 1));
+
+    const result = await getAnnualObligation(user.id, utc(2024, 12, 1));
+
+    expect(result.hasExcludedHourlyRequests).toBe(false);
   });
 
   it("期間一括申請(Phase 5)で作成・承認された申請も、単日申請と同じようにtakenへ反映される(batchIdの有無で扱いが変わらない回帰確認)", async () => {

@@ -304,6 +304,58 @@ async function main() {
     });
   });
 
+  // 年5日取得義務: 達成(met)デモ用社員。義務期間を1つだけ持つよう入社日を選び(6ヶ月マイルストーンの
+  // みが到来し、次の18ヶ月マイルストーンはまだ先)、その期間内で5日ちょうど取得済みにする
+  const metUser = await ensureUser({
+    name: "達成 七郎",
+    email: "obligation-met@example.com",
+    password: "password1234",
+    role: "employee",
+    hireDate: utcDate(2025, 6, 1),
+  });
+  await resetLeaveData(metUser.id, async () => {
+    const ledger = await createAutoGrantLedger(metUser.id, metUser.hireDate, today);
+    // 義務期間(基準日2025-12-01〜2026-11-30)内で1日ずつ5回取得(合計5日、義務ちょうど達成)
+    await ledger.consumeApproved(utcDate(2026, 1, 15), "full_day", admin1.id);
+    await ledger.consumeApproved(utcDate(2026, 2, 15), "full_day", admin1.id);
+    await ledger.consumeApproved(utcDate(2026, 3, 15), "full_day", admin1.id);
+    await ledger.consumeApproved(utcDate(2026, 4, 15), "full_day", admin1.id);
+    await ledger.consumeApproved(utcDate(2026, 5, 15), "full_day", admin1.id);
+  });
+
+  // 年5日取得義務: 要注意(at_risk、期限まで60日以内)デモ用社員。義務期間を1つだけ持つよう
+  // 入社日を選び、期限間近だが未達のままにしておく(取得済み2日・残り3日)
+  const atRiskUser = await ensureUser({
+    name: "間近 八郎",
+    email: "obligation-at-risk@example.com",
+    password: "password1234",
+    role: "employee",
+    hireDate: utcDate(2025, 2, 1),
+  });
+  await resetLeaveData(atRiskUser.id, async () => {
+    const ledger = await createAutoGrantLedger(atRiskUser.id, atRiskUser.hireDate, today);
+    // 義務期間(基準日2025-08-01〜2026-07-31)内で2日だけ取得済み
+    await ledger.consumeApproved(utcDate(2025, 9, 10), "full_day", admin1.id);
+    await ledger.consumeApproved(utcDate(2026, 3, 15), "full_day", admin1.id);
+  });
+
+  // 年5日取得義務: 義務違反(overdue)のうち、直近(OVERDUE_DISPLAY_WINDOW_DAYS=14日以内)に
+  // 期限を迎えたばかりのデモ用社員。社員一覧では直近の義務違反のみ赤バッジで目立たせる仕様
+  // (それより古い義務違反は一覧では「-」表示、社員詳細画面でのみ確認できる)ため、
+  // 一覧で赤バッジが実際に表示される例として用意する
+  const recentlyOverdueUser = await ensureUser({
+    name: "直近 九郎",
+    email: "obligation-recently-overdue@example.com",
+    password: "password1234",
+    role: "employee",
+    hireDate: utcDate(2025, 1, 15),
+  });
+  await resetLeaveData(recentlyOverdueUser.id, async () => {
+    // 義務期間(基準日2025-07-15〜2026-07-14)は未達のまま放置。今日時点で期限超過からまだ
+    // 日が浅い(14日以内)ため、一覧でも赤バッジが表示される
+    await createAutoGrantLedger(recentlyOverdueUser.id, recentlyOverdueUser.hireDate, today);
+  });
+
   // 退職済み社員(退職処理による自動却下・自動取消が反映済みの状態を再現)。
   // 退職日以降は付与が発生しないため、法定スケジュールはthroughDate=退職日で打ち切る
   const terminatedUser = await ensureUser({
@@ -363,6 +415,9 @@ async function main() {
   console.log("  fefo-test@example.com (FEFO分割消費検証用・pending申請あり)");
   console.log("  rejected-cancelled@example.com (却下・取消履歴あり)");
   console.log("  hourly-test@example.com (時間単位年休の取得履歴あり・承認待ち含む)");
+  console.log("  obligation-met@example.com (年5日取得義務: 達成)");
+  console.log("  obligation-at-risk@example.com (年5日取得義務: 要注意/期限間近)");
+  console.log("  obligation-recently-overdue@example.com (年5日取得義務: 義務違反/直近14日以内)");
   console.log("  terminated@example.com (退職済み・ログイン不可)");
 }
 

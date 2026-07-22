@@ -3,7 +3,10 @@ import { notFound } from "next/navigation";
 
 import { isAdmin, requireSelfOrAdminPage } from "@/lib/auth/guards";
 import { startOfTodayUTC } from "@/lib/date/calendar";
+import { computeGrantExpiryStatus } from "@/lib/leave/balance";
 import {
+  GRANT_EXPIRY_STATUS_BADGE_CLASSES,
+  GRANT_EXPIRY_STATUS_LABELS,
   OBLIGATION_STATUS_BADGE_CLASSES,
   OBLIGATION_STATUS_LABELS,
   STATUS_BADGE_CLASSES,
@@ -139,19 +142,27 @@ export default async function EmployeeDetailPage({
           <p className="text-xs text-gray-500">年5日取得義務</p>
           {employee.obligation.current ? (
             <div className="space-y-1">
-              <span
-                className={`inline-block rounded-full px-2 py-1 text-xs font-medium ${OBLIGATION_STATUS_BADGE_CLASSES[employee.obligation.current.status.status]}`}
-              >
-                {OBLIGATION_STATUS_LABELS[employee.obligation.current.status.status]}
-              </span>
+              {employee.obligation.current.status.status !== "on_track" && (
+                <span
+                  className={`inline-block rounded-full px-2 py-1 text-xs font-medium ${OBLIGATION_STATUS_BADGE_CLASSES[employee.obligation.current.status.status]}`}
+                >
+                  {OBLIGATION_STATUS_LABELS[employee.obligation.current.status.status]}
+                </span>
+              )}
               <p className="text-sm text-gray-700">
-                基準日 {formatDate(employee.obligation.current.period.start)} / 期限{" "}
+                基準日 {formatDate(employee.obligation.current.period.start)} / 義務期限{" "}
                 {formatDate(employee.obligation.current.status.deadline)}
+                {employee.obligation.current.status.status === "overdue" && "を経過済み"}
               </p>
               <p className="text-sm text-gray-700">
                 取得済み{employee.obligation.current.status.taken}日 / 取得予定
                 {employee.obligation.current.status.planned}日
               </p>
+              {employee.obligation.hasExcludedHourlyRequests && (
+                <p className="text-xs text-gray-400">
+                  ※時間単位年休は取得時間に関わらず、この算定には含まれません
+                </p>
+              )}
               {employee.obligation.otherUnmetCount > 0 && (
                 <p className="text-xs text-gray-400">
                   ほか{employee.obligation.otherUnmetCount}件の未達期間があります
@@ -306,17 +317,33 @@ export default async function EmployeeDetailPage({
               <tr>
                 <th className="py-2 font-medium">付与日</th>
                 <th className="py-2 font-medium">付与日数</th>
+                <th className="py-2 font-medium">残日数</th>
                 <th className="py-2 font-medium">失効予定日</th>
               </tr>
             </thead>
             <tbody>
-              {employee.grants.map((grant) => (
-                <tr key={grant.id} className="border-b border-gray-100 last:border-0">
-                  <td className="py-2 text-gray-900">{formatDate(grant.grantedDate)}</td>
-                  <td className="py-2 text-gray-700">{grant.grantedDays}日</td>
-                  <td className="py-2 text-gray-700">{formatDate(grant.expireDate)}</td>
-                </tr>
-              ))}
+              {employee.grants.map((grant) => {
+                const expiryStatus = computeGrantExpiryStatus(grant.remainingDays, grant.expireDate, asOf);
+                return (
+                  <tr key={grant.id} className="border-b border-gray-100 last:border-0">
+                    <td className="py-2 text-gray-900">{formatDate(grant.grantedDate)}</td>
+                    <td className="py-2 text-gray-700">{grant.grantedDays}日</td>
+                    <td className="py-2 text-gray-700">{Math.max(0, grant.remainingDays)}日</td>
+                    <td className="py-2 text-gray-700">
+                      <div className="flex flex-col gap-1">
+                        <span>{formatDate(grant.expireDate)}</span>
+                        {expiryStatus !== "normal" && (
+                          <span
+                            className={`w-fit rounded-full px-2 py-1 text-xs font-medium ${GRANT_EXPIRY_STATUS_BADGE_CLASSES[expiryStatus]}`}
+                          >
+                            {GRANT_EXPIRY_STATUS_LABELS[expiryStatus]}
+                          </span>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         )}
