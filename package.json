@@ -10,7 +10,16 @@
     "pretest": "prisma generate",
     "test": "vitest run",
     "pretest:watch": "prisma generate",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "docker:up": "docker compose up -d --build",
+    "docker:down": "docker compose down",
+    "docker:rebuild": "docker compose up -d --build --renew-anon-volumes app",
+    "docker:logs": "docker compose logs -f app",
+    "docker:migrate": "docker compose exec app npx prisma migrate dev",
+    "docker:seed": "docker compose exec app npx prisma db seed",
+    "docker:test": "docker compose exec app npm run test",
+    "docker:lint": "docker compose exec app npm run lint",
+    "docker:sh": "docker compose exec app sh"
   },
   "dependencies": {
     "@prisma/adapter-pg": "^7.8.0",

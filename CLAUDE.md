@@ -36,17 +36,24 @@
 - `src/app/api/employees/[id]/leave-ledger/route.ts` — 年次有給休暇管理簿のExcelダウンロードエンドポイント
 
 ### コマンド
+DB + アプリはすべて Docker Compose で管理する(`Dockerfile`, `docker-compose.yml`)。ホストに Node.js をインストールしなくても以下だけで動く。ソースは bind mount されるためホットリロードも効く。
+
 ```
-docker compose up -d       # ローカル PostgreSQL を起動
-npx prisma migrate dev     # スキーマ変更を適用
-npx prisma db seed         # シード管理者ユーザー + テスト社員を(再)作成
-npm run dev                # 開発サーバーを起動 (http://localhost:3000)
-npm run build              # 本番ビルド(型チェックも兼ねる)
-npm run lint                # ESLint
+cp .env.example .env           # 初回のみ: AUTH_SECRET / CRON_SECRET は生成した値に書き換える
+docker compose up -d --build   # DB + アプリを起動(初回はイメージビルドも実行)
+npm run docker:migrate         # スキーマ変更を適用
+npm run docker:seed            # シード管理者ユーザー + テスト社員を(再)作成
+npm run docker:logs            # アプリのログを追跡(http://localhost:3000)
+npm run docker:test            # テスト実行
+npm run docker:lint            # ESLint
+npm run docker:rebuild         # package-lock.json 更新後など、依存関係を入れ直したいとき
 ```
 
+`npm run dev` / `npm run build` / `npm run lint` / `npm run test` はホストに直接 Node.js をインストールして実行する場合用にそのまま残っているが、通常は上記の `docker:*` スクリプト経由での実行を主とする。
+
 ### 補足
-- `.env` にはローカルのシークレット(`DATABASE_URL`, `AUTH_SECRET`)が入っており gitignore 対象。想定される形式は `.env.example` に記載。
+- `.env` にはローカルのシークレット(`DATABASE_URL`, `AUTH_SECRET`)が入っており gitignore 対象。想定される形式は `.env.example` に記載。Docker Compose の `app` サービスは `.env` を読み込みつつ、コンテナネットワーク内で解決できるよう `DATABASE_URL` のホスト名部分だけ `db` に上書きする(`docker-compose.yml` 参照)。
+- `node_modules` / `.next` / `src/generated`(Prisma生成クライアント、OS依存バイナリを含む)は `app` コンテナ専用の匿名ボリュームに分離しており、macOSホストの成果物とは混在しない。
 - `LeaveConsumption.cancelledAt` は、承認済み申請の自己取消により残高が復元される際にセットされる(`src/lib/leave/mutations.ts` の `withdrawApprovedLeaveRequest`)が、退職時の自動取消では意図的に `null` のまま残す(この場合は残高は復元されない) — spec.md セクション4.3/6/9参照。
 
 ## 仕様のソース・オブ・トゥルース

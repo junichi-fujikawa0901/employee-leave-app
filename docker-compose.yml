@@ -10,6 +10,32 @@ services:
       - "5432:5432"
     volumes:
       - db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U leave_app -d leave_app_dev"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "3000:3000"
+    env_file:
+      - .env
+    environment:
+      # コンテナネットワーク内では db サービス名で解決するため .env の localhost 指定を上書きする
+      DATABASE_URL: postgresql://leave_app:leave_app@db:5432/leave_app_dev?schema=public
+    volumes:
+      - .:/app
+      - /app/node_modules
+      - /app/.next
+      - /app/src/generated
 
 volumes:
   db_data:
