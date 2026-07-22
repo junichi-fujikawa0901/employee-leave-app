@@ -1,6 +1,6 @@
 ## 有給休暇管理アプリ
 
-社員の有給休暇の付与・申請・承認を管理する社内向けアプリです。仕様の正式なソース・オブ・トゥルースは [spec.md](spec.md) を参照してください。
+社員の有給休暇の付与・申請・承認を管理する社内向けアプリです。仕様の正式なソース・オブ・トゥルースは [doc/spec.md](doc/spec.md) を参照してください。
 
 - **フレームワーク**: Next.js 16 (App Router) + TypeScript, Tailwind CSS
 - **ORM / DB**: Prisma 7 (driver adapter: `@prisma/adapter-pg`) + PostgreSQL
