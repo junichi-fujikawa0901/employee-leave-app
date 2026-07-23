@@ -515,6 +515,158 @@ export async function getLeaveLedger(
   );
 }
 
+export interface ExportSummaryRow {
+  userId: string;
+  name: string;
+  email: string;
+  status: UserStatus;
+  grantedDaysInPeriod: number;
+  consumedDaysInPeriod: number;
+  remainingDaysAtTo: number;
+}
+
+export interface ExportGrantRow {
+  userName: string;
+  userEmail: string;
+  grantedDate: Date;
+  grantedDays: number;
+  expireDate: Date;
+  grantType: GrantType;
+}
+
+export interface ExportConsumptionRow {
+  userName: string;
+  userEmail: string;
+  targetDate: Date;
+  unit: LeaveUnit;
+  hours: number | null;
+  consumedDays: number;
+}
+
+/**
+ * 全社員を対象に、指定期間(from〜to、両端含む)の付与合計・消化合計・to時点の残高を集計する
+ * (給与・勤怠システム連携用エクスポートのサマリー)。to時点の残高はgetRemainingDaysAsOfと
+ * 同じ絞り込み条件(cancelledAt:null かつ leaveRequest.reviewedAt < toの翌日0時)を
+ * 全社員一括のバッチクエリとして適用する。単純にgetActiveGrantsWithRemaining相当の
+ * 「reviewedAtで絞らない」条件を過去日付に使うと、to時点でまだ承認されていなかった消化まで
+ * 差し引いてしまい不正確になるため、この絞り込みが必須(Codexレビューのmust-fix対応)。
+ */
+export async function getExportSummary(from: Date, to: Date): Promise<ExportSummaryRow[]> {
+  const normalizedFrom = toUtcMidnight(from);
+  const normalizedTo = toUtcMidnight(to);
+  const endOfToDay = addDaysUTC(normalizedTo, 1);
+
+  const users = await prisma.user.findMany({ orderBy: { hireDate: "asc" } });
+  const userIds = users.map((user) => user.id);
+
+  const [grantsInPeriod, consumptionsInPeriod, grantsForBalance] = await Promise.all([
+    prisma.leaveGrant.findMany({
+      where: { userId: { in: userIds }, grantedDate: { gte: normalizedFrom, lte: normalizedTo } },
+      select: { userId: true, grantedDays: true },
+    }),
+    prisma.leaveConsumption.findMany({
+      where: {
+        cancelledAt: null,
+        leaveRequest: {
+          userId: { in: userIds },
+          status: LeaveRequestStatus.approved,
+          targetDate: { gte: normalizedFrom, lte: normalizedTo },
+        },
+      },
+      select: { consumedDays: true, leaveRequest: { select: { userId: true } } },
+    }),
+    prisma.leaveGrant.findMany({
+      where: { userId: { in: userIds }, grantedDate: { lte: normalizedTo }, expireDate: { gte: normalizedTo } },
+      include: {
+        consumptions: {
+          where: { cancelledAt: null, leaveRequest: { reviewedAt: { lt: endOfToDay } } },
+          select: { consumedDays: true },
+        },
+      },
+    }),
+  ]);
+
+  const grantedByUser = new Map<string, number>();
+  for (const grant of grantsInPeriod) {
+    grantedByUser.set(grant.userId, (grantedByUser.get(grant.userId) ?? 0) + toNumber(grant.grantedDays));
+  }
+
+  const consumedByUser = new Map<string, number>();
+  for (const consumption of consumptionsInPeriod) {
+    const userId = consumption.leaveRequest.userId;
+    consumedByUser.set(userId, (consumedByUser.get(userId) ?? 0) + toNumber(consumption.consumedDays));
+  }
+
+  const remainingByUser = new Map<string, number>();
+  for (const grant of grantsForBalance) {
+    const remaining = toNumber(grant.grantedDays) - sumConsumedDays(grant.consumptions);
+    remainingByUser.set(grant.userId, (remainingByUser.get(grant.userId) ?? 0) + remaining);
+  }
+
+  return users.map((user) => ({
+    userId: user.id,
+    name: user.name,
+    email: user.email,
+    status: user.status,
+    grantedDaysInPeriod: grantedByUser.get(user.id) ?? 0,
+    consumedDaysInPeriod: consumedByUser.get(user.id) ?? 0,
+    remainingDaysAtTo: remainingByUser.get(user.id) ?? 0,
+  }));
+}
+
+/** 期間内(from〜to、両端含む)に付与されたLeaveGrantの明細一覧(給与・勤怠システム連携用エクスポート) */
+export async function getExportGrantDetails(from: Date, to: Date): Promise<ExportGrantRow[]> {
+  const normalizedFrom = toUtcMidnight(from);
+  const normalizedTo = toUtcMidnight(to);
+
+  const grants = await prisma.leaveGrant.findMany({
+    where: { grantedDate: { gte: normalizedFrom, lte: normalizedTo } },
+    include: { user: { select: { name: true, email: true } } },
+    orderBy: [{ grantedDate: "asc" }, { id: "asc" }],
+  });
+
+  return grants.map((grant) => ({
+    userName: grant.user.name,
+    userEmail: grant.user.email,
+    grantedDate: grant.grantedDate,
+    grantedDays: toNumber(grant.grantedDays),
+    expireDate: grant.expireDate,
+    grantType: grant.grantType,
+  }));
+}
+
+/**
+ * 期間内(from〜to、両端含む)に承認済みで消化されたLeaveConsumptionの明細一覧
+ * (給与・勤怠システム連携用エクスポート)。時間単位年休(unit=hourly)はhoursに取得時間を持つ。
+ */
+export async function getExportConsumptionDetails(from: Date, to: Date): Promise<ExportConsumptionRow[]> {
+  const normalizedFrom = toUtcMidnight(from);
+  const normalizedTo = toUtcMidnight(to);
+
+  const consumptions = await prisma.leaveConsumption.findMany({
+    where: {
+      cancelledAt: null,
+      leaveRequest: {
+        status: LeaveRequestStatus.approved,
+        targetDate: { gte: normalizedFrom, lte: normalizedTo },
+      },
+    },
+    include: {
+      leaveRequest: { include: { user: { select: { name: true, email: true } } } },
+    },
+    orderBy: [{ leaveRequest: { targetDate: "asc" } }, { id: "asc" }],
+  });
+
+  return consumptions.map((consumption) => ({
+    userName: consumption.leaveRequest.user.name,
+    userEmail: consumption.leaveRequest.user.email,
+    targetDate: consumption.leaveRequest.targetDate,
+    unit: consumption.leaveRequest.unit,
+    hours: consumption.leaveRequest.hours,
+    consumedDays: toNumber(consumption.consumedDays),
+  }));
+}
+
 /** 社員詳細画面(4.3)用 */
 export async function getEmployeeDetail(userId: string): Promise<EmployeeDetail | null> {
   const asOf = startOfTodayUTC();

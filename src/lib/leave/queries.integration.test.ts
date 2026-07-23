@@ -1,7 +1,13 @@
 import { describe, it, expect, afterEach } from "vitest";
 
 import { approveLeaveRequestBatch, createLeaveRequestBatch } from "@/lib/leave/mutations";
-import { getAnnualObligation, getLeaveLedger } from "@/lib/leave/queries";
+import {
+  getAnnualObligation,
+  getExportConsumptionDetails,
+  getExportGrantDetails,
+  getExportSummary,
+  getLeaveLedger,
+} from "@/lib/leave/queries";
 import { computeExpireDate } from "@/lib/leave/schedule";
 import { prisma } from "@/lib/prisma";
 
@@ -9,20 +15,24 @@ const utc = (y: number, m: number, d: number) => new Date(Date.UTC(y, m - 1, d))
 
 const createdUserIds: string[] = [];
 
-async function createTestUser(hireDate: Date): Promise<{ id: string }> {
+async function createTestUser(
+  hireDate: Date,
+  options?: { name?: string; status?: "active" | "terminated" },
+): Promise<{ id: string; name: string; email: string }> {
   const email = `${crypto.randomUUID()}@annual-obligation-test.local`;
+  const name = options?.name ?? `年5日義務テスト ${email}`;
   const user = await prisma.user.create({
     data: {
-      name: `年5日義務テスト ${email}`,
+      name,
       email,
       passwordHash: "not-used-in-test",
       role: "employee",
       hireDate,
-      status: "active",
+      status: options?.status ?? "active",
     },
   });
   createdUserIds.push(user.id);
-  return { id: user.id };
+  return { id: user.id, name, email };
 }
 
 async function createAnnualAutoGrant(
@@ -372,5 +382,109 @@ describe("getLeaveLedger", () => {
     expect(entry.hours).toBe(4);
     expect(entry.consumedDays).toBe(0.5);
     expect(result[0].takenDays).toBe(0.5);
+  });
+});
+
+describe("getExportGrantDetails / getExportConsumptionDetails / getExportSummary(給与・勤怠システム連携用エクスポート)", () => {
+  it("getExportGrantDetails: grantedDateが期間内(両端含む)の付与のみを返す", async () => {
+    const user = await createTestUser(utc(2024, 1, 1));
+    await createAnnualAutoGrant(user.id, utc(2026, 1, 1), 10); // 期間の開始日ちょうど
+    await createAnnualAutoGrant(user.id, utc(2026, 1, 31), 5); // 期間の終了日ちょうど
+    await createAnnualAutoGrant(user.id, utc(2026, 2, 1), 3); // 期間外(翌日)
+
+    // getExportGrantDetailsは全社員が対象のため、既存のシードデータと混ざらないよう
+    // このテストで作成したユーザーのメールアドレスで絞り込む
+    const result = (await getExportGrantDetails(utc(2026, 1, 1), utc(2026, 1, 31))).filter(
+      (r) => r.userEmail === user.email,
+    );
+
+    expect(result).toHaveLength(2);
+    expect(result.map((r) => r.grantedDays).sort((a, b) => a - b)).toEqual([5, 10]);
+    expect(result.every((r) => r.userName === user.name)).toBe(true);
+  });
+
+  it("getExportConsumptionDetails: targetDateが期間内・承認済み・未取消の消化のみを返し、時間単位年休はhoursを保持する", async () => {
+    const user = await createTestUser(utc(2024, 1, 1));
+    const grant = await createAnnualAutoGrant(user.id, utc(2024, 7, 1), 10);
+
+    // 期間内・承認済み(対象)
+    await createApprovedRequestWithConsumption(user.id, utc(2026, 1, 15), utc(2026, 1, 15), grant.id, 1);
+    // 期間内・時間単位年休(対象、hours保持)
+    await createApprovedHourlyRequestWithConsumption(user.id, utc(2026, 1, 20), utc(2026, 1, 20), grant.id, 4, 0.5);
+    // 期間外(対象外)
+    await createApprovedRequestWithConsumption(user.id, utc(2026, 2, 1), utc(2026, 2, 1), grant.id, 1);
+    // 却下(対象外)
+    await createRequest(user.id, utc(2026, 1, 16), "cancelled");
+
+    const result = (await getExportConsumptionDetails(utc(2026, 1, 1), utc(2026, 1, 31))).filter(
+      (r) => r.userEmail === user.email,
+    );
+
+    expect(result).toHaveLength(2);
+    const fullDay = result.find((r) => r.targetDate.getTime() === utc(2026, 1, 15).getTime());
+    const hourly = result.find((r) => r.targetDate.getTime() === utc(2026, 1, 20).getTime());
+    expect(fullDay?.consumedDays).toBe(1);
+    expect(fullDay?.hours).toBeNull();
+    expect(hourly?.unit).toBe("hourly");
+    expect(hourly?.hours).toBe(4);
+    expect(hourly?.consumedDays).toBe(0.5);
+  });
+
+  it("getExportConsumptionDetails: 取り下げ済み(cancelledAt設定済み)の消化は対象外になる", async () => {
+    const user = await createTestUser(utc(2024, 1, 1));
+    const grant = await createAnnualAutoGrant(user.id, utc(2024, 7, 1), 10);
+    const request = await prisma.leaveRequest.create({
+      data: { userId: user.id, targetDate: utc(2026, 1, 15), unit: "full_day", status: "approved", reviewedAt: utc(2026, 1, 15) },
+      select: { id: true },
+    });
+    await prisma.leaveConsumption.create({
+      data: { leaveRequestId: request.id, leaveGrantId: grant.id, consumedDays: 1, cancelledAt: utc(2026, 1, 16) },
+    });
+
+    const result = (await getExportConsumptionDetails(utc(2026, 1, 1), utc(2026, 1, 31))).filter(
+      (r) => r.userEmail === user.email,
+    );
+
+    expect(result.find((r) => r.targetDate.getTime() === utc(2026, 1, 15).getTime())).toBeUndefined();
+  });
+
+  it("getExportSummary: 期間内付与日数・期間内消化日数を正しく集計する", async () => {
+    const user = await createTestUser(utc(2024, 1, 1));
+    const grant = await createAnnualAutoGrant(user.id, utc(2026, 1, 1), 10);
+    await createApprovedRequestWithConsumption(user.id, utc(2026, 1, 15), utc(2026, 1, 15), grant.id, 2);
+    // 期間外の付与・消化は集計対象外
+    await createAnnualAutoGrant(user.id, utc(2026, 2, 1), 3);
+    await createApprovedRequestWithConsumption(user.id, utc(2026, 2, 2), utc(2026, 2, 2), grant.id, 1);
+
+    const result = await getExportSummary(utc(2026, 1, 1), utc(2026, 1, 31));
+    const row = result.find((r) => r.userId === user.id);
+
+    expect(row?.grantedDaysInPeriod).toBe(10);
+    expect(row?.consumedDaysInPeriod).toBe(2);
+  });
+
+  it("getExportSummary: 期末残日数はreviewedAt基準で計算され、to時点でまだ承認されていない消化は差し引かれない(getLeaveLedgerのgetRemainingDaysAsOfと同じ考え方)", async () => {
+    const user = await createTestUser(utc(2024, 1, 1));
+    const grant = await createAnnualAutoGrant(user.id, utc(2024, 7, 1), 10);
+
+    // targetDateは期間外(過去)だがreviewedAtがto以前 → 期末残に反映される
+    await createApprovedRequestWithConsumption(user.id, utc(2025, 12, 1), utc(2026, 1, 10), grant.id, 1);
+    // reviewedAtがtoより後 → 期末残には反映されない
+    await createApprovedRequestWithConsumption(user.id, utc(2026, 1, 20), utc(2026, 2, 1), grant.id, 3);
+
+    const result = await getExportSummary(utc(2026, 1, 1), utc(2026, 1, 31));
+    const row = result.find((r) => r.userId === user.id);
+
+    expect(row?.remainingDaysAtTo).toBe(9); // 10 - 1(reviewedAtがto以前の分のみ)
+  });
+
+  it("getExportSummary: 在職中・退職済みの両方が対象になり、在職状況が正しく返る", async () => {
+    const activeUser = await createTestUser(utc(2024, 1, 1), { status: "active" });
+    const terminatedUser = await createTestUser(utc(2020, 1, 1), { status: "terminated" });
+
+    const result = await getExportSummary(utc(2026, 1, 1), utc(2026, 1, 31));
+
+    expect(result.find((r) => r.userId === activeUser.id)?.status).toBe("active");
+    expect(result.find((r) => r.userId === terminatedUser.id)?.status).toBe("terminated");
   });
 });
