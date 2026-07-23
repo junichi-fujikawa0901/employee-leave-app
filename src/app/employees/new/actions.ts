@@ -51,6 +51,7 @@ export async function createEmployeeAction(
       password,
       hireDate: new Date(`${hireDateValue}T00:00:00.000Z`),
       role: roleValue,
+      actingAdminId: session.user.id,
     });
     createdId = created.id;
   } catch (error) {

@@ -20,10 +20,13 @@ import { createHoliday } from "@/lib/holidays/mutations";
 import {
   approveLeaveRequest,
   approveLeaveRequestBatch,
+  cancelLeaveRequest,
   cancelLeaveRequestBatch,
   createLeaveRequest,
   createLeaveRequestBatch,
+  rejectLeaveRequest,
   rejectLeaveRequestBatch,
+  withdrawApprovedLeaveRequest,
 } from "@/lib/leave/mutations";
 import { computeExpireDate } from "@/lib/leave/schedule";
 import { prisma } from "@/lib/prisma";
@@ -85,6 +88,9 @@ afterEach(async () => {
   }
   await prisma.leaveConsumption.deleteMany({
     where: { leaveGrant: { userId: { in: createdUserIds } } },
+  });
+  await prisma.auditLog.deleteMany({
+    where: { OR: [{ actorId: { in: createdUserIds } }, { targetUserId: { in: createdUserIds } }] },
   });
   await prisma.leaveRequest.deleteMany({ where: { userId: { in: createdUserIds } } });
   await prisma.leaveGrant.deleteMany({ where: { userId: { in: createdUserIds } } });
@@ -648,5 +654,121 @@ describe("休日マスタによる有給申請のブロック", () => {
     const stillPending = await prisma.leaveRequest.findMany({ where: { batchId, status: "pending" } });
     expect(approved).toHaveLength(1);
     expect(stillPending).toHaveLength(1);
+  });
+});
+
+describe("監査ログの記録", () => {
+  it("approveLeaveRequest: 承認すると監査ログ(leave_request_approved)が記録される", async () => {
+    const user = await createTestUser(utc(2025, 1, 1));
+    const reviewer = await createTestUser(utc(2020, 1, 1));
+    await createAnnualAutoGrant(user.id, utc(2025, 7, 1), 10);
+    const request = await createLeaveRequest({ userId: user.id, targetDate: utc(2999, 8, 1), unit: "full_day" });
+
+    await approveLeaveRequest({ requestId: request.id, reviewerId: reviewer.id });
+
+    const log = await prisma.auditLog.findFirst({ where: { targetId: request.id } });
+    expect(log).not.toBeNull();
+    expect(log?.action).toBe("leave_request_approved");
+    expect(log?.actorId).toBe(reviewer.id);
+    expect(log?.targetUserId).toBe(user.id);
+    expect(log?.detail).toMatchObject({ unit: "full_day" });
+  });
+
+  it("rejectLeaveRequest: 却下すると監査ログ(leave_request_rejected)が理由付きで記録される", async () => {
+    const user = await createTestUser(utc(2025, 1, 1));
+    const reviewer = await createTestUser(utc(2020, 1, 1));
+    const request = await createLeaveRequest({ userId: user.id, targetDate: utc(2999, 8, 1), unit: "full_day" });
+
+    await rejectLeaveRequest({ requestId: request.id, reviewerId: reviewer.id, reason: "業務都合" });
+
+    const log = await prisma.auditLog.findFirst({ where: { targetId: request.id } });
+    expect(log?.action).toBe("leave_request_rejected");
+    expect(log?.actorId).toBe(reviewer.id);
+    expect(log?.detail).toMatchObject({ reason: "業務都合" });
+  });
+
+  it("cancelLeaveRequest: 本人取消で監査ログ(leave_request_cancelled)が記録される", async () => {
+    const user = await createTestUser(utc(2025, 1, 1));
+    const request = await createLeaveRequest({ userId: user.id, targetDate: utc(2999, 8, 1), unit: "full_day" });
+
+    await cancelLeaveRequest({ requestId: request.id, actingUserId: user.id, reason: "予定変更" });
+
+    const log = await prisma.auditLog.findFirst({ where: { targetId: request.id } });
+    expect(log?.action).toBe("leave_request_cancelled");
+    expect(log?.actorId).toBe(user.id);
+    expect(log?.targetUserId).toBe(user.id);
+    expect(log?.detail).toMatchObject({ reason: "予定変更" });
+  });
+
+  it("withdrawApprovedLeaveRequest: 承認済み申請の取り下げで監査ログ(leave_request_withdrawn)が記録される", async () => {
+    const user = await createTestUser(utc(2025, 1, 1));
+    const reviewer = await createTestUser(utc(2020, 1, 1));
+    await createAnnualAutoGrant(user.id, utc(2025, 7, 1), 10);
+    const request = await createLeaveRequest({ userId: user.id, targetDate: utc(2999, 8, 1), unit: "full_day" });
+    await approveLeaveRequest({ requestId: request.id, reviewerId: reviewer.id });
+
+    await withdrawApprovedLeaveRequest({ requestId: request.id, actingUserId: user.id, reason: "取得日変更" });
+
+    const logs = await prisma.auditLog.findMany({ where: { targetId: request.id }, orderBy: { createdAt: "asc" } });
+    expect(logs).toHaveLength(2); // 承認1件 + 取り下げ1件
+    expect(logs[1].action).toBe("leave_request_withdrawn");
+    expect(logs[1].detail).toMatchObject({ reason: "取得日変更" });
+  });
+
+  it("approveLeaveRequestBatch: 一括承認では対象件数分の監査ログが個別に記録される", async () => {
+    const user = await createTestUser(utc(2025, 1, 1));
+    const reviewer = await createTestUser(utc(2020, 1, 1));
+    await createAnnualAutoGrant(user.id, utc(2025, 7, 1), 10);
+    const created = await createLeaveRequestBatch({
+      userId: user.id,
+      dates: [utc(2999, 9, 1), utc(2999, 9, 2)],
+    });
+    const batchId = created[0].batchId as string;
+
+    await approveLeaveRequestBatch({ batchId, reviewerId: reviewer.id });
+
+    const logs = await prisma.auditLog.findMany({
+      where: { targetId: { in: created.map((r) => r.id) } },
+    });
+    expect(logs).toHaveLength(2);
+    expect(logs.every((log) => log.action === "leave_request_approved")).toBe(true);
+  });
+
+  it("rejectLeaveRequestBatch: 一括却下では対象件数分の監査ログが個別に記録される", async () => {
+    const user = await createTestUser(utc(2024, 1, 1));
+    const reviewer = await createTestUser(utc(2020, 1, 1));
+    const created = await createLeaveRequestBatch({
+      userId: user.id,
+      dates: [utc(2999, 9, 1), utc(2999, 9, 2)],
+    });
+    const batchId = created[0].batchId as string;
+
+    await rejectLeaveRequestBatch({ batchId, reviewerId: reviewer.id, reason: "都合により" });
+
+    const logs = await prisma.auditLog.findMany({
+      where: { targetId: { in: created.map((r) => r.id) } },
+    });
+    expect(logs).toHaveLength(2);
+    expect(logs.every((log) => log.action === "leave_request_rejected")).toBe(true);
+    expect(logs.every((log) => log.detail !== null && (log.detail as { reason?: string }).reason === "都合により")).toBe(
+      true,
+    );
+  });
+
+  it("cancelLeaveRequestBatch: 一括取消では対象件数分の監査ログが個別に記録される", async () => {
+    const user = await createTestUser(utc(2024, 1, 1));
+    const created = await createLeaveRequestBatch({
+      userId: user.id,
+      dates: [utc(2999, 9, 1), utc(2999, 9, 2)],
+    });
+    const batchId = created[0].batchId as string;
+
+    await cancelLeaveRequestBatch({ batchId, actingUserId: user.id });
+
+    const logs = await prisma.auditLog.findMany({
+      where: { targetId: { in: created.map((r) => r.id) } },
+    });
+    expect(logs).toHaveLength(2);
+    expect(logs.every((log) => log.action === "leave_request_cancelled")).toBe(true);
   });
 });

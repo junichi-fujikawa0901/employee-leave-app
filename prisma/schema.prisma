@@ -43,6 +43,16 @@ enum HolidayType {
   company_day_off
 }
 
+enum AuditAction {
+  leave_request_approved
+  leave_request_rejected
+  leave_request_cancelled
+  leave_request_withdrawn
+  employee_terminated
+  employee_created
+  employee_updated
+}
+
 /// 7.1 社員（User）
 model User {
   id               String     @id @default(cuid())
@@ -56,9 +66,11 @@ model User {
   createdAt        DateTime   @default(now()) @map("created_at")
   updatedAt        DateTime   @updatedAt @map("updated_at")
 
-  leaveGrants      LeaveGrant[]
-  leaveRequests    LeaveRequest[]   @relation("RequestsByUser")
-  reviewedRequests LeaveRequest[]   @relation("RequestsReviewedBy")
+  leaveGrants           LeaveGrant[]
+  leaveRequests         LeaveRequest[]   @relation("RequestsByUser")
+  reviewedRequests      LeaveRequest[]   @relation("RequestsReviewedBy")
+  auditLogsAsActor      AuditLog[]       @relation("AuditLogsByActor")
+  auditLogsAsTargetUser AuditLog[]       @relation("AuditLogsByTargetUser")
 
   @@map("users")
 }
@@ -145,4 +157,28 @@ model Holiday {
 
   @@unique([date])
   @@map("holidays")
+}
+
+/// 監査ログ。管理者が行う重要な意思決定操作(有給申請の承認/却下/取消/取り下げ、
+/// 退職処理、社員登録・編集)を対象に「誰が・いつ・誰に対して・何をしたか」を記録する。
+/// mutation関数内の既存(または新設)トランザクションに含めて書き込むため、
+/// 操作が成功したときのみログが残り、ロールバック時はログも一緒に消える。
+model AuditLog {
+  id           String      @id @default(cuid())
+  actorId      String      @map("actor_id")
+  action       AuditAction
+  /// 操作対象の社員(有給申請なら申請者、退職処理・社員編集ならその社員自身)
+  targetUserId String      @map("target_user_id")
+  /// 対象エンティティのID(LeaveRequest.id等)。社員登録・編集など対象がUser自身の操作ではnull
+  targetId     String?     @map("target_id")
+  /// 操作ごとの補足情報(却下・取消理由、変更前後の値等)
+  detail       Json?
+  createdAt    DateTime    @default(now()) @map("created_at")
+
+  actor      User @relation("AuditLogsByActor", fields: [actorId], references: [id])
+  targetUser User @relation("AuditLogsByTargetUser", fields: [targetUserId], references: [id])
+
+  @@index([targetUserId, createdAt])
+  @@index([actorId, createdAt])
+  @@map("audit_logs")
 }

@@ -1,7 +1,8 @@
 import bcrypt from "bcryptjs";
 
 import type { Role, User } from "@/generated/prisma/client";
-import { LeaveRequestStatus, Prisma, UserStatus } from "@/generated/prisma/client";
+import { AuditAction, LeaveRequestStatus, Prisma, UserStatus } from "@/generated/prisma/client";
+import { recordAuditLog } from "@/lib/audit/log";
 import { hasAnyGrant } from "@/lib/leave/queries";
 import { prisma } from "@/lib/prisma";
 
@@ -44,18 +45,35 @@ export async function createEmployee(input: {
   password: string;
   hireDate: Date;
   role: Role;
+  actingAdminId: string;
 }): Promise<User> {
   const passwordHash = await bcrypt.hash(input.password, SALT_ROUNDS);
 
   try {
-    return await prisma.user.create({
-      data: {
-        name: input.name,
-        email: input.email,
-        passwordHash,
-        role: input.role,
-        hireDate: input.hireDate,
-      },
+    return await prisma.$transaction(async (tx) => {
+      const created = await tx.user.create({
+        data: {
+          name: input.name,
+          email: input.email,
+          passwordHash,
+          role: input.role,
+          hireDate: input.hireDate,
+        },
+      });
+
+      await recordAuditLog(tx, {
+        actorId: input.actingAdminId,
+        action: AuditAction.employee_created,
+        targetUserId: created.id,
+        detail: {
+          name: input.name,
+          email: input.email,
+          hireDate: input.hireDate.toISOString(),
+          role: input.role,
+        },
+      });
+
+      return created;
     });
   } catch (error) {
     if (isUniqueConstraintError(error)) {
@@ -71,6 +89,7 @@ export async function updateEmployee(input: {
   name: string;
   email: string;
   hireDate?: Date;
+  actingAdminId: string;
 }): Promise<User> {
   const current = await prisma.user.findUnique({ where: { id: input.userId } });
   if (!current) {
@@ -85,10 +104,29 @@ export async function updateEmployee(input: {
     hireDate = input.hireDate;
   }
 
+  const hasChanges =
+    input.name !== current.name || input.email !== current.email || hireDate.getTime() !== current.hireDate.getTime();
+
   try {
-    return await prisma.user.update({
-      where: { id: input.userId },
-      data: { name: input.name, email: input.email, hireDate },
+    return await prisma.$transaction(async (tx) => {
+      const updated = await tx.user.update({
+        where: { id: input.userId },
+        data: { name: input.name, email: input.email, hireDate },
+      });
+
+      if (hasChanges) {
+        await recordAuditLog(tx, {
+          actorId: input.actingAdminId,
+          action: AuditAction.employee_updated,
+          targetUserId: input.userId,
+          detail: {
+            before: { name: current.name, email: current.email, hireDate: current.hireDate.toISOString() },
+            after: { name: input.name, email: input.email, hireDate: hireDate.toISOString() },
+          },
+        });
+      }
+
+      return updated;
     });
   } catch (error) {
     if (isUniqueConstraintError(error)) {
@@ -142,6 +180,13 @@ export async function terminateEmployee(input: {
         cancelledAt: new Date(),
         cancelReason: "退職処理による自動取消",
       },
+    });
+
+    await recordAuditLog(tx, {
+      actorId: input.actingAdminId,
+      action: AuditAction.employee_terminated,
+      targetUserId: input.userId,
+      detail: { terminationDate: input.terminationDate.toISOString() },
     });
   });
 }

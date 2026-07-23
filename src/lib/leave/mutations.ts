@@ -1,5 +1,5 @@
 import type { LeaveRequest } from "@/generated/prisma/client";
-import { GrantType, LeaveRequestStatus, LeaveUnit, Prisma, UserStatus } from "@/generated/prisma/client";
+import { AuditAction, GrantType, LeaveRequestStatus, LeaveUnit, Prisma, UserStatus } from "@/generated/prisma/client";
 import { startOfTodayUTC, toUtcMidnight } from "@/lib/date/calendar";
 import { decimalToNumber } from "@/lib/decimal";
 import { InsufficientBalanceError, planFefoConsumption } from "@/lib/leave/balance";
@@ -26,6 +26,7 @@ import {
   TargetOnHolidayError,
   WithdrawalDeadlinePassedError,
 } from "@/lib/leave/errors";
+import { recordAuditLog } from "@/lib/audit/log";
 import { checkHolidayEligibility } from "@/lib/holidays/eligibility";
 import {
   checkHourlyCap,
@@ -299,19 +300,32 @@ export async function cancelLeaveRequest(input: {
   actingUserId: string;
   reason?: string;
 }): Promise<void> {
-  const result = await prisma.leaveRequest.updateMany({
-    where: { id: input.requestId, userId: input.actingUserId, status: LeaveRequestStatus.pending },
-    data: {
-      status: LeaveRequestStatus.cancelled,
-      cancelledBy: input.actingUserId,
-      cancelledAt: new Date(),
-      cancelReason: input.reason?.trim() || null,
-    },
-  });
+  const cancelReason = input.reason?.trim() || null;
 
-  if (result.count === 0) {
-    throw new NotRequestOwnerError();
-  }
+  await prisma.$transaction(async (tx) => {
+    const result = await tx.leaveRequest.updateMany({
+      where: { id: input.requestId, userId: input.actingUserId, status: LeaveRequestStatus.pending },
+      data: {
+        status: LeaveRequestStatus.cancelled,
+        cancelledBy: input.actingUserId,
+        cancelledAt: new Date(),
+        cancelReason,
+      },
+    });
+
+    if (result.count === 0) {
+      throw new NotRequestOwnerError();
+    }
+
+    const request = await tx.leaveRequest.findUniqueOrThrow({ where: { id: input.requestId } });
+    await recordAuditLog(tx, {
+      actorId: input.actingUserId,
+      action: AuditAction.leave_request_cancelled,
+      targetUserId: request.userId,
+      targetId: request.id,
+      detail: { targetDate: request.targetDate.toISOString(), unit: request.unit, reason: cancelReason },
+    });
+  });
 }
 
 /**
@@ -338,6 +352,8 @@ export async function withdrawApprovedLeaveRequest(input: {
     throw new WithdrawalDeadlinePassedError();
   }
 
+  const withdrawReason = input.reason?.trim() || null;
+
   await prisma.$transaction(async (tx) => {
     const claimed = await tx.leaveRequest.updateMany({
       where: { id: input.requestId, status: LeaveRequestStatus.approved },
@@ -345,7 +361,7 @@ export async function withdrawApprovedLeaveRequest(input: {
         status: LeaveRequestStatus.cancelled,
         cancelledBy: input.actingUserId,
         cancelledAt: new Date(),
-        cancelReason: input.reason?.trim() || null,
+        cancelReason: withdrawReason,
       },
     });
     if (claimed.count === 0) {
@@ -355,6 +371,14 @@ export async function withdrawApprovedLeaveRequest(input: {
     await tx.leaveConsumption.updateMany({
       where: { leaveRequestId: input.requestId, cancelledAt: null },
       data: { cancelledAt: new Date() },
+    });
+
+    await recordAuditLog(tx, {
+      actorId: input.actingUserId,
+      action: AuditAction.leave_request_withdrawn,
+      targetUserId: request.userId,
+      targetId: request.id,
+      detail: { targetDate: request.targetDate.toISOString(), unit: request.unit, reason: withdrawReason },
     });
   });
 }
@@ -463,6 +487,14 @@ export async function approveLeaveRequest(input: { requestId: string; reviewerId
         consumedDays: item.consumedDays,
       })),
     });
+
+    await recordAuditLog(tx, {
+      actorId: input.reviewerId,
+      action: AuditAction.leave_request_approved,
+      targetUserId: request.userId,
+      targetId: request.id,
+      detail: { targetDate: request.targetDate.toISOString(), unit: request.unit, hours: request.hours },
+    });
   });
 }
 
@@ -483,19 +515,31 @@ export async function rejectLeaveRequest(input: {
     throw new SelfApprovalError();
   }
 
-  const result = await prisma.leaveRequest.updateMany({
-    where: { id: input.requestId, status: LeaveRequestStatus.pending },
-    data: {
-      status: LeaveRequestStatus.rejected,
-      reviewedById: input.reviewerId,
-      reviewedAt: new Date(),
-      rejectReason: input.reason?.trim() || null,
-    },
-  });
+  const rejectReason = input.reason?.trim() || null;
 
-  if (result.count === 0) {
-    throw new RequestNotPendingError();
-  }
+  await prisma.$transaction(async (tx) => {
+    const result = await tx.leaveRequest.updateMany({
+      where: { id: input.requestId, status: LeaveRequestStatus.pending },
+      data: {
+        status: LeaveRequestStatus.rejected,
+        reviewedById: input.reviewerId,
+        reviewedAt: new Date(),
+        rejectReason,
+      },
+    });
+
+    if (result.count === 0) {
+      throw new RequestNotPendingError();
+    }
+
+    await recordAuditLog(tx, {
+      actorId: input.reviewerId,
+      action: AuditAction.leave_request_rejected,
+      targetUserId: request.userId,
+      targetId: request.id,
+      detail: { targetDate: request.targetDate.toISOString(), unit: request.unit, reason: rejectReason },
+    });
+  });
 }
 
 export interface BatchOutcome {

@@ -113,6 +113,9 @@ afterEach(async () => {
   await prisma.leaveConsumption.deleteMany({
     where: { leaveGrant: { userId: { in: createdUserIds } } },
   });
+  await prisma.auditLog.deleteMany({
+    where: { OR: [{ actorId: { in: createdUserIds } }, { targetUserId: { in: createdUserIds } }] },
+  });
   await prisma.leaveRequest.deleteMany({ where: { userId: { in: createdUserIds } } });
   await prisma.leaveGrant.deleteMany({ where: { userId: { in: createdUserIds } } });
   await prisma.user.deleteMany({ where: { id: { in: createdUserIds } } });

@@ -42,6 +42,7 @@ export async function updateEmployeeAction(
         hireDateEditable && typeof hireDateValue === "string" && hireDateValue
           ? new Date(`${hireDateValue}T00:00:00.000Z`)
           : undefined,
+      actingAdminId: session.user.id,
     });
   } catch (error) {
     if (error instanceof ActionError || error instanceof EmployeeMutationError) {
