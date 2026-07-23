@@ -23,8 +23,10 @@ import {
   RequestNotPendingError,
   RequestTargetNotActiveError,
   SelfApprovalError,
+  TargetOnHolidayError,
   WithdrawalDeadlinePassedError,
 } from "@/lib/leave/errors";
+import { checkHolidayEligibility } from "@/lib/holidays/eligibility";
 import {
   checkHourlyCap,
   checkNewRequest,
@@ -33,6 +35,25 @@ import {
   unitToDays,
 } from "@/lib/leave/request-rules";
 import { prisma } from "@/lib/prisma";
+
+/** targetDateひとつが休日マスタに登録されているか判定する(単日申請・承認用) */
+async function isTargetDateHoliday(tx: Prisma.TransactionClient, targetDate: Date): Promise<boolean> {
+  const holiday = await tx.holiday.findUnique({ where: { date: targetDate } });
+  return holiday !== null;
+}
+
+/** start〜end(両端含む)の範囲にある休日の日付集合を取得する(期間一括申請用) */
+async function loadHolidayDateSet(
+  tx: Prisma.TransactionClient,
+  start: Date,
+  end: Date,
+): Promise<Set<number>> {
+  const holidays = await tx.holiday.findMany({
+    where: { date: { gte: start, lte: end } },
+    select: { date: true },
+  });
+  return new Set(holidays.map((holiday) => holiday.date.getTime()));
+}
 
 /** 単日申請(createLeaveRequest)・期間一括申請(createLeaveRequestBatch)の両方で使う対象日ロックキー */
 async function lockTargetDate(tx: Prisma.TransactionClient, userId: string, targetDate: Date): Promise<void> {
@@ -156,6 +177,10 @@ export async function createLeaveRequest(input: {
 
     await lockTargetDate(tx, input.userId, input.targetDate);
 
+    if (await isTargetDateHoliday(tx, input.targetDate)) {
+      throw new TargetOnHolidayError();
+    }
+
     const existing = await tx.leaveRequest.findMany({
       where: {
         userId: input.userId,
@@ -237,8 +262,15 @@ export async function createLeaveRequestBatch(input: {
       existingByDate.set(key, list);
     }
 
+    const holidayDates = await loadHolidayDateSet(tx, minDate, maxDate);
+
     const conflicts: { targetDate: Date; reason: BatchRequestConflictReason }[] = [];
     for (const date of sortedDates) {
+      const holidayCheck = checkHolidayEligibility(date, holidayDates);
+      if (!holidayCheck.ok) {
+        conflicts.push({ targetDate: date, reason: holidayCheck.reason });
+        continue;
+      }
       const existingForDate = existingByDate.get(date.getTime()) ?? [];
       const check = checkNewRequest(existingForDate, LeaveUnit.full_day, null);
       if (!check.ok) {
@@ -357,6 +389,12 @@ export async function approveLeaveRequest(input: { requestId: string; reviewerId
     // 承認すると残高を超えて二重消費しうる既存バグがあった。固定キー(0)は対象日ロックの
     // 数値空間・時間単位ロックの文字列saltとは別のsalt(':approve')を使うため衝突しない。
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${request.userId}:approve`}), 0)`;
+
+    // 休日マスタ導入前に作成された申請や、作成後に休日として追加登録された日の申請が
+    // 承認をすり抜けないよう、承認時にも作成時と同じ休日チェックを行う(Codexレビューのmust-fix対応)。
+    if (await isTargetDateHoliday(tx, request.targetDate)) {
+      throw new TargetOnHolidayError();
+    }
 
     if (request.unit === LeaveUnit.hourly) {
       // 作成時から承認時までの間に同じ義務期間内の他の時間単位申請が承認・取消される

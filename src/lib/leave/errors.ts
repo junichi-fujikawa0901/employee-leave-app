@@ -100,15 +100,21 @@ function formatDate(date: Date): string {
   return date.toISOString().slice(0, 10);
 }
 
-export type BatchRequestConflictReason = "duplicate_unit" | "exceeds_daily_limit";
+export type BatchRequestConflictReason = "duplicate_unit" | "exceeds_daily_limit" | "target_on_holiday";
+
+const BATCH_REQUEST_CONFLICT_REASON_LABELS: Record<BatchRequestConflictReason, string> = {
+  duplicate_unit: "重複",
+  exceeds_daily_limit: "1日の上限超過",
+  target_on_holiday: "休日",
+};
 
 export class BatchRequestConflictError extends DomainError {
   constructor(
     public readonly conflicts: { targetDate: Date; reason: BatchRequestConflictReason }[],
   ) {
     super(
-      `一部の対象日で申請できません(重複または1日の上限超過): ${conflicts
-        .map((c) => formatDate(c.targetDate))
+      `一部の対象日で申請できません: ${conflicts
+        .map((c) => `${formatDate(c.targetDate)}(${BATCH_REQUEST_CONFLICT_REASON_LABELS[c.reason]})`)
         .join(", ")}`,
     );
   }
@@ -117,5 +123,11 @@ export class BatchRequestConflictError extends DomainError {
 export class RequestTargetNotActiveError extends DomainError {
   constructor() {
     super("退職済みの社員は有給を申請できません");
+  }
+}
+
+export class TargetOnHolidayError extends DomainError {
+  constructor() {
+    super("休日として登録されている日には申請できません");
   }
 }

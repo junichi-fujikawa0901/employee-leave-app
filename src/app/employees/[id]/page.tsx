@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 
 import { isAdmin, requireSelfOrAdminPage } from "@/lib/auth/guards";
 import { startOfTodayUTC } from "@/lib/date/calendar";
+import { getHolidays } from "@/lib/holidays/queries";
 import { computeGrantExpiryStatus } from "@/lib/leave/balance";
 import {
   GRANT_EXPIRY_STATUS_BADGE_CLASSES,
@@ -53,6 +54,9 @@ export default async function EmployeeDetailPage({
   const viewerIsAdmin = isAdmin(session);
   const viewerIsSelf = session.user.id === employee.id;
   const asOf = startOfTodayUTC();
+  const holidayTimestamps = viewerIsSelf
+    ? (await getHolidays()).map((holiday) => holiday.date.getTime())
+    : [];
 
   const availableYears = Array.from(
     new Set(employee.requests.map((request) => request.targetDate.getUTCFullYear())),
@@ -175,7 +179,9 @@ export default async function EmployeeDetailPage({
         </div>
       </div>
 
-      {viewerIsSelf && <LeaveRequestForm employeeId={employee.id} />}
+      {viewerIsSelf && (
+        <LeaveRequestForm employeeId={employee.id} holidayTimestamps={holidayTimestamps} />
+      )}
 
       {pendingBatchGroups.length > 0 && (
         <section className="rounded-lg bg-white p-6 shadow">

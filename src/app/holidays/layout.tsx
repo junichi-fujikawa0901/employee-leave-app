@@ -3,7 +3,7 @@ import type { ReactNode } from "react";
 import { AppHeader } from "@/components/app-header";
 import { requireSession } from "@/lib/auth/guards";
 
-export default async function EmployeesLayout({ children }: { children: ReactNode }) {
+export default async function HolidaysLayout({ children }: { children: ReactNode }) {
   const session = await requireSession();
 
   return (

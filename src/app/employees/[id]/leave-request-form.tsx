@@ -15,7 +15,13 @@ function formatDateWithWeekday(date: Date): string {
   return `${date.toISOString().slice(0, 10)}(${WEEKDAY_LABELS[date.getUTCDay()]})`;
 }
 
-export function LeaveRequestForm({ employeeId }: { employeeId: string }) {
+export function LeaveRequestForm({
+  employeeId,
+  holidayTimestamps,
+}: {
+  employeeId: string;
+  holidayTimestamps: number[];
+}) {
   const [mode, setMode] = useState<"single" | "batch">("single");
 
   return (
@@ -43,7 +49,11 @@ export function LeaveRequestForm({ employeeId }: { employeeId: string }) {
           </button>
         </div>
       </div>
-      {mode === "single" ? <SingleDayForm employeeId={employeeId} /> : <BatchForm employeeId={employeeId} />}
+      {mode === "single" ? (
+        <SingleDayForm employeeId={employeeId} />
+      ) : (
+        <BatchForm employeeId={employeeId} holidayTimestamps={holidayTimestamps} />
+      )}
     </div>
   );
 }
@@ -117,12 +127,20 @@ function SingleDayForm({ employeeId }: { employeeId: string }) {
 }
 
 /** spec.md 6章: 期間一括申請(Phase 5)。全休のみ対象、上限MAX_BULK_REQUEST_DAYS日 */
-function BatchForm({ employeeId }: { employeeId: string }) {
+function BatchForm({
+  employeeId,
+  holidayTimestamps,
+}: {
+  employeeId: string;
+  holidayTimestamps: number[];
+}) {
   const action = submitLeaveRequestBatchAction.bind(null, employeeId);
   const [state, formAction, isPending] = useActionState(action, initialState);
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
   const [skipWeekends, setSkipWeekends] = useState(true);
+  const [skipHolidays, setSkipHolidays] = useState(true);
+  const holidayDates = useMemo(() => new Set(holidayTimestamps), [holidayTimestamps]);
 
   const previewDates = useMemo(() => {
     if (!startDate || !endDate) {
@@ -133,8 +151,8 @@ function BatchForm({ employeeId }: { employeeId: string }) {
     if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || start.getTime() > end.getTime()) {
       return [];
     }
-    return buildBulkRequestDates(start, end, { skipWeekends });
-  }, [startDate, endDate, skipWeekends]);
+    return buildBulkRequestDates(start, end, { skipWeekends, skipHolidays, holidayDates });
+  }, [startDate, endDate, skipWeekends, skipHolidays, holidayDates]);
 
   const exceedsLimit = previewDates.length > MAX_BULK_REQUEST_DAYS;
 
@@ -178,6 +196,15 @@ function BatchForm({ employeeId }: { employeeId: string }) {
           />
           土日を除外する
         </label>
+        <label className="flex items-center gap-1 pb-2 text-sm text-gray-700">
+          <input
+            type="checkbox"
+            name="skipHolidays"
+            checked={skipHolidays}
+            onChange={(event) => setSkipHolidays(event.target.checked)}
+          />
+          休日を除外する
+        </label>
         <button
           type="submit"
           disabled={isPending || previewDates.length === 0 || exceedsLimit}
@@ -187,7 +214,7 @@ function BatchForm({ employeeId }: { employeeId: string }) {
         </button>
       </div>
       <p className="text-xs text-gray-400">
-        まとめて申請できるのは全休のみです(半休・時間単位は1日ずつ申請してください)。土日除外は入力の便利機能であり、実際の勤務日を保証するものではありません。
+        まとめて申請できるのは全休のみです(半休・時間単位は1日ずつ申請してください)。土日除外は入力の便利機能であり、実際の勤務日を保証するものではありません。休日マスタに登録された日は、除外をOFFにして含めても申請時にブロックされます。
       </p>
       {previewDates.length > 0 && (
         <div className="rounded border border-gray-200 bg-gray-50 p-2 text-xs text-gray-600">

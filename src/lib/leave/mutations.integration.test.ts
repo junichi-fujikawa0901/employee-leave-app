@@ -14,7 +14,9 @@ import {
   InvalidHourlyRequestError,
   NotRequestOwnerError,
   RequestTargetNotActiveError,
+  TargetOnHolidayError,
 } from "@/lib/leave/errors";
+import { createHoliday } from "@/lib/holidays/mutations";
 import {
   approveLeaveRequest,
   approveLeaveRequestBatch,
@@ -29,6 +31,13 @@ import { prisma } from "@/lib/prisma";
 const utc = (y: number, m: number, d: number) => new Date(Date.UTC(y, m - 1, d));
 
 const createdUserIds: string[] = [];
+const createdHolidayIds: string[] = [];
+
+async function createTestHoliday(date: Date): Promise<{ id: string }> {
+  const holiday = await createHoliday({ date, name: "テスト休日", type: "national_holiday" });
+  createdHolidayIds.push(holiday.id);
+  return { id: holiday.id };
+}
 
 async function createTestUser(
   hireDate: Date,
@@ -67,6 +76,10 @@ async function createAnnualAutoGrant(
 }
 
 afterEach(async () => {
+  if (createdHolidayIds.length > 0) {
+    await prisma.holiday.deleteMany({ where: { id: { in: createdHolidayIds } } });
+    createdHolidayIds.length = 0;
+  }
   if (createdUserIds.length === 0) {
     return;
   }
@@ -546,5 +559,94 @@ describe("approveLeaveRequestBatch / rejectLeaveRequestBatch / cancelLeaveReques
     expect(outcome.failed).toHaveLength(0);
     const approvedStillApproved = await prisma.leaveRequest.findUnique({ where: { id: created[0].id } });
     expect(approvedStillApproved?.status).toBe("approved");
+  });
+});
+
+describe("休日マスタによる有給申請のブロック", () => {
+  it("createLeaveRequest: 休日マスタに登録された日への単日申請はTargetOnHolidayErrorで拒否される", async () => {
+    const user = await createTestUser(utc(2024, 1, 1));
+    await createTestHoliday(utc(2999, 8, 11));
+
+    await expect(
+      createLeaveRequest({ userId: user.id, targetDate: utc(2999, 8, 11), unit: "full_day" }),
+    ).rejects.toThrow(TargetOnHolidayError);
+
+    const requests = await prisma.leaveRequest.findMany({ where: { userId: user.id } });
+    expect(requests).toHaveLength(0);
+  });
+
+  it("createLeaveRequest: 休日でない日への申請は影響を受けない", async () => {
+    const user = await createTestUser(utc(2024, 1, 1));
+    await createTestHoliday(utc(2999, 8, 11));
+
+    const request = await createLeaveRequest({
+      userId: user.id,
+      targetDate: utc(2999, 8, 12),
+      unit: "full_day",
+    });
+    expect(request.targetDate).toEqual(utc(2999, 8, 12));
+  });
+
+  it("createLeaveRequestBatch: 対象範囲内に休日が1件でもあれば、1件も作成されずBatchRequestConflictErrorになる(all-or-nothing)", async () => {
+    const user = await createTestUser(utc(2024, 1, 1));
+    await createTestHoliday(utc(2999, 8, 11));
+
+    await expect(
+      createLeaveRequestBatch({
+        userId: user.id,
+        dates: [utc(2999, 8, 10), utc(2999, 8, 11), utc(2999, 8, 12)],
+      }),
+    ).rejects.toThrow(BatchRequestConflictError);
+
+    const requests = await prisma.leaveRequest.findMany({ where: { userId: user.id } });
+    expect(requests).toHaveLength(0);
+  });
+
+  it("approveLeaveRequest: 作成後に休日として登録された日の申請は、承認時にTargetOnHolidayErrorで拒否されpendingのまま残る", async () => {
+    const user = await createTestUser(utc(2025, 1, 1));
+    const reviewer = await createTestUser(utc(2020, 1, 1));
+    await createAnnualAutoGrant(user.id, utc(2025, 7, 1), 10);
+
+    const request = await createLeaveRequest({
+      userId: user.id,
+      targetDate: utc(2999, 8, 11),
+      unit: "full_day",
+    });
+    // 申請作成後に、対象日を休日として登録する(休日マスタ導入前の申請や、後から休日追加されたケースを再現)
+    await createTestHoliday(utc(2999, 8, 11));
+
+    await expect(
+      approveLeaveRequest({ requestId: request.id, reviewerId: reviewer.id }),
+    ).rejects.toThrow(TargetOnHolidayError);
+
+    const stillPending = await prisma.leaveRequest.findUnique({ where: { id: request.id } });
+    expect(stillPending?.status).toBe("pending");
+    const consumption = await prisma.leaveConsumption.findFirst({ where: { leaveRequestId: request.id } });
+    expect(consumption).toBeNull();
+  });
+
+  it("approveLeaveRequestBatch: 休日該当分はfailedに分類され、それ以外は承認される部分成功", async () => {
+    const user = await createTestUser(utc(2025, 1, 1));
+    const reviewer = await createTestUser(utc(2020, 1, 1));
+    await createAnnualAutoGrant(user.id, utc(2025, 7, 1), 10);
+
+    const created = await createLeaveRequestBatch({
+      userId: user.id,
+      dates: [utc(2999, 8, 10), utc(2999, 8, 12)],
+    });
+    const batchId = created[0].batchId as string;
+    // 作成後に片方の対象日を休日として登録する
+    await createTestHoliday(utc(2999, 8, 10));
+
+    const outcome = await approveLeaveRequestBatch({ batchId, reviewerId: reviewer.id });
+
+    expect(outcome.succeeded).toHaveLength(1);
+    expect(outcome.failed).toHaveLength(1);
+    expect(outcome.failed[0].reason).toBe(new TargetOnHolidayError().message);
+
+    const approved = await prisma.leaveRequest.findMany({ where: { batchId, status: "approved" } });
+    const stillPending = await prisma.leaveRequest.findMany({ where: { batchId, status: "pending" } });
+    expect(approved).toHaveLength(1);
+    expect(stillPending).toHaveLength(1);
   });
 });

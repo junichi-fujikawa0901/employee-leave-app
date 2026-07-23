@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 
 import { LeaveUnit } from "@/generated/prisma/client";
 import { ActionError, assertAdminForAction, requireSessionForAction } from "@/lib/auth/guards";
+import { getHolidayDateSet } from "@/lib/holidays/queries";
 import { InsufficientBalanceError } from "@/lib/leave/balance";
 import { MAX_BULK_REQUEST_DAYS, buildBulkRequestDates } from "@/lib/leave/date-range";
 import { DomainError } from "@/lib/leave/errors";
@@ -231,6 +232,7 @@ export async function submitLeaveRequestBatchAction(
     const startValue = formData.get("startDate");
     const endValue = formData.get("endDate");
     const skipWeekends = formData.get("skipWeekends") === "on";
+    const skipHolidays = formData.get("skipHolidays") === "on";
 
     if (typeof startValue !== "string" || !startValue || typeof endValue !== "string" || !endValue) {
       return { error: "開始日・終了日を入力してください" };
@@ -243,7 +245,8 @@ export async function submitLeaveRequestBatchAction(
     }
 
     // クライアントが計算したプレビューの日付リストはそのまま信用せず、サーバー側で再計算する
-    const dates = buildBulkRequestDates(start, end, { skipWeekends });
+    const holidayDates = await getHolidayDateSet(start, end);
+    const dates = buildBulkRequestDates(start, end, { skipWeekends, skipHolidays, holidayDates });
     if (dates.length === 0) {
       return { error: "対象日が1件もありません(土日除外の設定を確認してください)" };
     }

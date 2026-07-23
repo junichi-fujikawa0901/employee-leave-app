@@ -23,12 +23,20 @@ export default async function EmployeesPage() {
           <h1 className="text-2xl font-bold text-gray-900">社員一覧</h1>
           <span className="mt-2 block h-1 w-full bg-brand-accent" aria-hidden="true" />
         </div>
-        <Link
-          href="/employees/new"
-          className="rounded bg-brand-navy px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-brand-navy-light"
-        >
-          社員を新規登録
-        </Link>
+        <div className="flex gap-2">
+          <Link
+            href="/holidays"
+            className="rounded border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50"
+          >
+            休日マスタ
+          </Link>
+          <Link
+            href="/employees/new"
+            className="rounded bg-brand-navy px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-brand-navy-light"
+          >
+            社員を新規登録
+          </Link>
+        </div>
       </div>
 
       <AutoGrantPanel />

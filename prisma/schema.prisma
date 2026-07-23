@@ -38,6 +38,11 @@ enum LeaveRequestStatus {
   cancelled
 }
 
+enum HolidayType {
+  national_holiday
+  company_day_off
+}
+
 /// 7.1 社員（User）
 model User {
   id               String     @id @default(cuid())
@@ -125,4 +130,19 @@ model LeaveConsumption {
   leaveGrant   LeaveGrant   @relation(fields: [leaveGrantId], references: [id])
 
   @@map("leave_consumptions")
+}
+
+/// 会社カレンダー / 休日マスタ。祝日(national_holiday)と会社独自の休日(company_day_off)を
+/// 同じテーブルで管理する。1日1件に限定(祝日と会社休日が同日の場合は手動登録時にエラー、
+/// 内閣府データ取り込み時は既存のcompany_day_offを優先しスキップする)。
+model Holiday {
+  id        String      @id @default(cuid())
+  date      DateTime    @map("date") @db.Date
+  name      String
+  type      HolidayType
+  createdAt DateTime    @default(now()) @map("created_at")
+  updatedAt DateTime    @updatedAt @map("updated_at")
+
+  @@unique([date])
+  @@map("holidays")
 }

@@ -8,20 +8,27 @@ export const MAX_BULK_REQUEST_DAYS = 31;
  * 土曜(6)・日曜(0)を除外する。土日除外はUI上の便利機能であり、休日を保証するものではない
  * (spec.md 9章: 勤務日適格性は本システムでは保証しない)。
  *
+ * skipHolidaysがtrue(デフォルト)の場合、holidayDates(toUtcMidnight済みのtimestamp集合)に
+ * 含まれる日も除外する。休日マスタに登録された日は作成時にサーバー側でブロックされるため、
+ * ここでの除外はブロックされる事態を未然に避けるための便利機能という位置づけ。
+ *
  * この関数はMAX_BULK_REQUEST_DAYSの上限チェックを行わない(単なる日付リスト生成に徹する)。
  * 上限判定は呼び出し側(UI表示・サーバー側検証それぞれ)の責務とする。
  */
 export function buildBulkRequestDates(
   start: Date,
   end: Date,
-  options: { skipWeekends: boolean },
+  options: { skipWeekends: boolean; skipHolidays?: boolean; holidayDates?: Set<number> },
 ): Date[] {
-  const dates = enumerateDatesUTC(start, end);
-  if (!options.skipWeekends) {
-    return dates;
+  let dates = enumerateDatesUTC(start, end);
+  if (options.skipWeekends) {
+    dates = dates.filter((date) => {
+      const day = date.getUTCDay();
+      return day !== 0 && day !== 6;
+    });
   }
-  return dates.filter((date) => {
-    const day = date.getUTCDay();
-    return day !== 0 && day !== 6;
-  });
+  if (options.skipHolidays && options.holidayDates) {
+    dates = dates.filter((date) => !options.holidayDates!.has(date.getTime()));
+  }
+  return dates;
 }
