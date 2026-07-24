@@ -25,6 +25,12 @@ export default async function EmployeesPage() {
         </div>
         <div className="flex gap-2">
           <Link
+            href="/dashboard"
+            className="rounded border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50"
+          >
+            ダッシュボード
+          </Link>
+          <Link
             href="/employees/export"
             className="rounded border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50"
           >
