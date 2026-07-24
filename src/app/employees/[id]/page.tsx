@@ -16,6 +16,12 @@ import {
 } from "@/lib/leave/labels";
 import { getEmployeeDetail } from "@/lib/leave/queries";
 import { isWithinWithdrawalWindow } from "@/lib/leave/request-rules";
+import {
+  SPECIAL_LEAVE_STATUS_BADGE_CLASSES,
+  SPECIAL_LEAVE_STATUS_LABELS,
+  SPECIAL_LEAVE_TYPE_LABELS,
+} from "@/lib/special-leave/labels";
+import { getSpecialLeaveRequestsForUser } from "@/lib/special-leave/queries";
 
 import {
   ApproveRequestBatchButton,
@@ -45,7 +51,10 @@ export default async function EmployeeDetailPage({
   const { id } = await params;
   const { year: yearParam } = await searchParams;
   const session = await requireSelfOrAdminPage(id);
-  const employee = await getEmployeeDetail(id);
+  const [employee, specialLeaveRequests] = await Promise.all([
+    getEmployeeDetail(id),
+    getSpecialLeaveRequestsForUser(id),
+  ]);
 
   if (!employee) {
     notFound();
@@ -350,6 +359,47 @@ export default async function EmployeeDetailPage({
                   </tr>
                 );
               })}
+            </tbody>
+          </table>
+        )}
+      </section>
+
+      <section className="rounded-lg bg-white p-6 shadow">
+        <div className="mb-4 flex items-center justify-between">
+          <h2 className="text-sm font-semibold text-gray-900">特別休暇取得履歴</h2>
+          <Link href="/special-leaves" className="text-xs text-brand-navy hover:underline">
+            特別休暇ページへ →
+          </Link>
+        </div>
+        {specialLeaveRequests.length === 0 ? (
+          <p className="text-sm text-gray-400">申請履歴はありません</p>
+        ) : (
+          <table className="w-full text-left text-sm">
+            <thead className="border-b border-gray-200 text-gray-500">
+              <tr>
+                <th className="py-2 font-medium">種別</th>
+                <th className="py-2 font-medium">期間</th>
+                <th className="py-2 font-medium">日数</th>
+                <th className="py-2 font-medium">ステータス</th>
+              </tr>
+            </thead>
+            <tbody>
+              {specialLeaveRequests.map((request) => (
+                <tr key={request.id} className="border-b border-gray-100 last:border-0">
+                  <td className="py-2 text-gray-900">{SPECIAL_LEAVE_TYPE_LABELS[request.type]}</td>
+                  <td className="py-2 text-gray-700">
+                    {formatDate(request.startDate)}〜{formatDate(request.endDate)}
+                  </td>
+                  <td className="py-2 text-gray-700">{request.days}日</td>
+                  <td className="py-2">
+                    <span
+                      className={`rounded-full px-2 py-1 text-xs font-medium ${SPECIAL_LEAVE_STATUS_BADGE_CLASSES[request.status]}`}
+                    >
+                      {SPECIAL_LEAVE_STATUS_LABELS[request.status]}
+                    </span>
+                  </td>
+                </tr>
+              ))}
             </tbody>
           </table>
         )}

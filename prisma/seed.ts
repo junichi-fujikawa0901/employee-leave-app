@@ -5,6 +5,7 @@ import { type GrantBalanceInput, isGrantActive, planFefoConsumption } from "../s
 import { unitToDays } from "../src/lib/leave/request-rules";
 import { computeExpireDate, planAutoGrants, SYSTEM_LAUNCH_DATE } from "../src/lib/leave/schedule";
 import { prisma } from "../src/lib/prisma";
+import { getSummerWindowForYear } from "../src/lib/special-leave/rules";
 
 /**
  * このseedデータは「本システムは2024-01-01から運用を開始した」という前提で設計する。
@@ -407,6 +408,51 @@ async function main() {
     });
   });
 
+  // 特別休暇(有給とは独立した記録)のデモ用社員。有給関連データがないシンプルな社員として作成する
+  const specialLeaveDemoUser = await ensureUser({
+    name: "特別休暇デモ",
+    email: "special-leave-demo@example.com",
+    password: "password1234",
+    role: "employee",
+    hireDate: utcDate(2020, 4, 1),
+  });
+  await prisma.specialLeaveRequest.deleteMany({ where: { userId: specialLeaveDemoUser.id } });
+  await prisma.specialLeaveRequest.create({
+    data: {
+      userId: specialLeaveDemoUser.id,
+      type: "ceremonial",
+      startDate: daysFromNow(3),
+      endDate: daysFromNow(5),
+      status: "pending",
+    },
+  });
+
+  // 夏季休暇(暦年7〜9月に合計3日まで)の上限デモ用。今年すでに2日承認済みで残り1日の状態を作る
+  const summerLeaveDemoUser = await ensureUser({
+    name: "夏季休暇デモ",
+    email: "summer-leave-demo@example.com",
+    password: "password1234",
+    role: "employee",
+    hireDate: utcDate(2020, 4, 1),
+  });
+  await prisma.specialLeaveRequest.deleteMany({ where: { userId: summerLeaveDemoUser.id } });
+  const summerWindow = getSummerWindowForYear(todayUTC().getUTCFullYear());
+  await prisma.specialLeaveRequest.create({
+    data: {
+      userId: summerLeaveDemoUser.id,
+      type: "summer",
+      startDate: summerWindow.start,
+      endDate: utcDate(
+        summerWindow.start.getUTCFullYear(),
+        summerWindow.start.getUTCMonth() + 1,
+        summerWindow.start.getUTCDate() + 1,
+      ),
+      status: "approved",
+      reviewedById: admin1.id,
+      reviewedAt: todayUTC(),
+    },
+  });
+
   console.log("Seeded users (システムは2024-01-01から運用開始という前提、全員password1234):");
   console.log("  admin@example.com (管理者1・2024/2025年の取得履歴あり)");
   console.log("  admin2@example.com (管理者2・2024〜2026年の取得履歴あり)");
@@ -419,6 +465,8 @@ async function main() {
   console.log("  obligation-at-risk@example.com (年5日取得義務: 要注意/期限間近)");
   console.log("  obligation-recently-overdue@example.com (年5日取得義務: 義務違反/直近14日以内)");
   console.log("  terminated@example.com (退職済み・ログイン不可)");
+  console.log("  special-leave-demo@example.com (特別休暇: 慶弔休暇の承認待ちあり)");
+  console.log("  summer-leave-demo@example.com (夏季休暇: 今年2日承認済み・残り1日)");
 }
 
 main()

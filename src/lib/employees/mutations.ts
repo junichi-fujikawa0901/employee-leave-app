@@ -1,7 +1,7 @@
 import bcrypt from "bcryptjs";
 
 import type { Role, User } from "@/generated/prisma/client";
-import { AuditAction, LeaveRequestStatus, Prisma, UserStatus } from "@/generated/prisma/client";
+import { AuditAction, LeaveRequestStatus, Prisma, SpecialLeaveRequestStatus, UserStatus } from "@/generated/prisma/client";
 import { recordAuditLog } from "@/lib/audit/log";
 import { hasAnyGrant } from "@/lib/leave/queries";
 import { prisma } from "@/lib/prisma";
@@ -139,6 +139,9 @@ export async function updateEmployee(input: {
 /**
  * spec.md 4.4: 退職処理。(a)申請中は自動却下 (b)退職日より後のapproved申請は自動取消。
  * LeaveConsumptionには一切触れない(消化済み日数の残日数への復元は行わない)。
+ * 特別休暇(SpecialLeaveRequest)は有給とは独立した記録だが、退職後に未処理の申請が
+ * 宙に浮かないよう、pending状態のものは同様に自動却下する(spec.mdのスコープ外機能のため
+ * 承認済み分の自動取消は行わない — 残高消費を伴わないため取消の実益が薄い)。
  */
 export async function terminateEmployee(input: {
   userId: string;
@@ -179,6 +182,16 @@ export async function terminateEmployee(input: {
         cancelledBy: "system",
         cancelledAt: new Date(),
         cancelReason: "退職処理による自動取消",
+      },
+    });
+
+    await tx.specialLeaveRequest.updateMany({
+      where: { userId: input.userId, status: SpecialLeaveRequestStatus.pending },
+      data: {
+        status: SpecialLeaveRequestStatus.rejected,
+        reviewedById: input.actingAdminId,
+        reviewedAt: new Date(),
+        rejectReason: "退職処理による自動却下",
       },
     });
 

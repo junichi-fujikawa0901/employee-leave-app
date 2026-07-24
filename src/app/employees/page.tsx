@@ -43,6 +43,12 @@ export default async function EmployeesPage() {
             休日マスタ
           </Link>
           <Link
+            href="/special-leaves"
+            className="rounded border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50"
+          >
+            特別休暇
+          </Link>
+          <Link
             href="/audit-logs"
             className="rounded border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50"
           >

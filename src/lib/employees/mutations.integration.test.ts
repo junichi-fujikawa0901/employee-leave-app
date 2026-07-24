@@ -38,6 +38,7 @@ afterEach(async () => {
   });
   await prisma.leaveRequest.deleteMany({ where: { userId: { in: createdUserIds } } });
   await prisma.leaveGrant.deleteMany({ where: { userId: { in: createdUserIds } } });
+  await prisma.specialLeaveRequest.deleteMany({ where: { userId: { in: createdUserIds } } });
   await prisma.user.deleteMany({ where: { id: { in: createdUserIds } } });
   createdUserIds.length = 0;
 });
@@ -162,5 +163,53 @@ describe("terminateEmployee", () => {
     await expect(
       terminateEmployee({ userId: admin.id, terminationDate: utc(2026, 3, 31), actingAdminId: admin.id }),
     ).rejects.toThrow(CannotTerminateSelfError);
+  });
+
+  it("pendingの特別休暇申請は退職処理で自動却下され、承認済みの分は変更されない", async () => {
+    const admin = await createTestAdmin();
+    const email = `${crypto.randomUUID()}@terminate-special-leave-test.local`;
+    const employee = await createEmployee({
+      name: "特休退職太郎",
+      email,
+      password: "password1234",
+      hireDate: utc(2020, 4, 1),
+      role: "employee",
+      actingAdminId: admin.id,
+    });
+    createdUserIds.push(employee.id);
+
+    const pending = await prisma.specialLeaveRequest.create({
+      data: {
+        userId: employee.id,
+        type: "ceremonial",
+        startDate: utc(2026, 4, 10),
+        endDate: utc(2026, 4, 10),
+      },
+    });
+    const approved = await prisma.specialLeaveRequest.create({
+      data: {
+        userId: employee.id,
+        type: "ceremonial",
+        startDate: utc(2026, 2, 1),
+        endDate: utc(2026, 2, 1),
+        status: "approved",
+        reviewedById: admin.id,
+        reviewedAt: utc(2026, 1, 25),
+      },
+    });
+
+    await terminateEmployee({
+      userId: employee.id,
+      terminationDate: utc(2026, 3, 31),
+      actingAdminId: admin.id,
+    });
+
+    const updatedPending = await prisma.specialLeaveRequest.findUniqueOrThrow({ where: { id: pending.id } });
+    expect(updatedPending.status).toBe("rejected");
+    expect(updatedPending.rejectReason).toBe("退職処理による自動却下");
+    expect(updatedPending.reviewedById).toBe(admin.id);
+
+    const updatedApproved = await prisma.specialLeaveRequest.findUniqueOrThrow({ where: { id: approved.id } });
+    expect(updatedApproved.status).toBe("approved");
   });
 });

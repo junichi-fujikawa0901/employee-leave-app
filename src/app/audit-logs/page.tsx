@@ -5,6 +5,7 @@ import { AUDIT_ACTION_LABELS } from "@/lib/audit/labels";
 import { AUDIT_LOG_LIST_LIMIT, getAuditableUsers, getAuditLogs, type AuditLogRow } from "@/lib/audit/queries";
 import { requireAdminPage } from "@/lib/auth/guards";
 import { addDaysUTC, startOfTodayUTC } from "@/lib/date/calendar";
+import { SPECIAL_LEAVE_TYPE_LABELS } from "@/lib/special-leave/labels";
 
 function formatDate(date: Date): string {
   return date.toISOString().slice(0, 10);
@@ -48,6 +49,16 @@ function formatDetail(action: AuditAction, detail: Prisma.JsonValue): string {
       const before = (d.before ?? {}) as Record<string, unknown>;
       const after = (d.after ?? {}) as Record<string, unknown>;
       return `変更前: ${String(before.name ?? "")}(${String(before.email ?? "")}) → 変更後: ${String(after.name ?? "")}(${String(after.email ?? "")})`;
+    }
+    case "special_leave_request_approved": {
+      const type = d.type as keyof typeof SPECIAL_LEAVE_TYPE_LABELS | undefined;
+      return `種別: ${type ? SPECIAL_LEAVE_TYPE_LABELS[type] : ""} / 期間: ${dateOnly(d.startDate)}〜${dateOnly(d.endDate)}`;
+    }
+    case "special_leave_request_rejected":
+    case "special_leave_request_cancelled": {
+      const type = d.type as keyof typeof SPECIAL_LEAVE_TYPE_LABELS | undefined;
+      const reason = typeof d.reason === "string" && d.reason ? ` / 理由: ${d.reason}` : "";
+      return `種別: ${type ? SPECIAL_LEAVE_TYPE_LABELS[type] : ""} / 期間: ${dateOnly(d.startDate)}〜${dateOnly(d.endDate)}${reason}`;
     }
     default:
       return "";

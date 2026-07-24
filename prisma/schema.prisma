@@ -51,6 +51,24 @@ enum AuditAction {
   employee_terminated
   employee_created
   employee_updated
+  special_leave_request_approved
+  special_leave_request_rejected
+  special_leave_request_cancelled
+}
+
+/// 特別休暇の種別。有給休暇(annual_auto/special付与)とは完全に別制度。
+enum SpecialLeaveType {
+  ceremonial // 慶弔休暇
+  maternity  // 産前産後
+  childcare  // 育児
+  summer     // 夏季休暇(暦年7/1〜9/30に合計3日まで)
+}
+
+enum SpecialLeaveRequestStatus {
+  pending
+  approved
+  rejected
+  cancelled
 }
 
 /// 7.1 社員（User）
@@ -66,11 +84,13 @@ model User {
   createdAt        DateTime   @default(now()) @map("created_at")
   updatedAt        DateTime   @updatedAt @map("updated_at")
 
-  leaveGrants           LeaveGrant[]
-  leaveRequests         LeaveRequest[]   @relation("RequestsByUser")
-  reviewedRequests      LeaveRequest[]   @relation("RequestsReviewedBy")
-  auditLogsAsActor      AuditLog[]       @relation("AuditLogsByActor")
-  auditLogsAsTargetUser AuditLog[]       @relation("AuditLogsByTargetUser")
+  leaveGrants                  LeaveGrant[]
+  leaveRequests                LeaveRequest[]        @relation("RequestsByUser")
+  reviewedRequests             LeaveRequest[]        @relation("RequestsReviewedBy")
+  auditLogsAsActor             AuditLog[]             @relation("AuditLogsByActor")
+  auditLogsAsTargetUser        AuditLog[]             @relation("AuditLogsByTargetUser")
+  specialLeaveRequests         SpecialLeaveRequest[]  @relation("SpecialLeaveRequestsByUser")
+  reviewedSpecialLeaveRequests SpecialLeaveRequest[]  @relation("SpecialLeaveRequestsReviewedBy")
 
   @@map("users")
 }
@@ -181,4 +201,30 @@ model AuditLog {
   @@index([targetUserId, createdAt])
   @@index([actorId, createdAt])
   @@map("audit_logs")
+}
+
+/// 特別休暇(慶弔・産前産後・育児・夏季)申請。有給(LeaveRequest/LeaveGrant)の残高・
+/// FEFO消費・年5日取得義務には一切影響しない、完全に独立した記録。
+/// 取得日数はカラムに持たず endDate - startDate + 1 から都度算出する(完全な導出値のため)。
+model SpecialLeaveRequest {
+  id           String                    @id @default(cuid())
+  userId       String                    @map("user_id")
+  type         SpecialLeaveType
+  startDate    DateTime                  @map("start_date") @db.Date
+  endDate      DateTime                  @map("end_date") @db.Date
+  status       SpecialLeaveRequestStatus @default(pending)
+  requestedAt  DateTime                  @default(now()) @map("requested_at")
+  reviewedById String?                   @map("reviewed_by")
+  reviewedAt   DateTime?                 @map("reviewed_at")
+  rejectReason String?                   @map("reject_reason")
+  cancelledBy  String?                   @map("cancelled_by")
+  cancelledAt  DateTime?                 @map("cancelled_at")
+  cancelReason String?                   @map("cancel_reason")
+
+  user       User  @relation("SpecialLeaveRequestsByUser", fields: [userId], references: [id])
+  reviewedBy User? @relation("SpecialLeaveRequestsReviewedBy", fields: [reviewedById], references: [id])
+
+  // 夏季休暇の上限判定(userId, type=summer, startDateの年)で絞り込むための複合index
+  @@index([userId, type, startDate])
+  @@map("special_leave_requests")
 }
