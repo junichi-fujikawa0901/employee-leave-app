@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { ReactNode } from "react";
 
@@ -23,5 +24,27 @@ export function EmployeeRow({
     >
       {children}
     </tr>
+  );
+}
+
+/** モバイル(md未満)向けのカード表示。Linkベースのためキーボード操作・スクリーンリーダーでも遷移可能 */
+export function EmployeeCard({
+  href,
+  highlighted,
+  children,
+}: {
+  href: string;
+  highlighted?: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <Link
+      href={href}
+      className={`block rounded-lg border p-4 shadow-sm ${
+        highlighted ? "border-yellow-300 bg-yellow-50" : "border-gray-200 bg-white"
+      }`}
+    >
+      {children}
+    </Link>
   );
 }

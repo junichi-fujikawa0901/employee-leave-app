@@ -100,12 +100,6 @@ export default async function EmployeeDetailPage({
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">
-      {viewerIsAdmin && (
-        <Link href="/employees" className="text-sm text-gray-500 hover:text-gray-700">
-          ← 社員一覧に戻る
-        </Link>
-      )}
-
       <div className="flex items-start justify-between">
         <div>
           <div className="w-fit">
@@ -121,7 +115,7 @@ export default async function EmployeeDetailPage({
           <p className="text-sm text-gray-500">入社日: {formatDate(employee.hireDate)}</p>
         </div>
         {viewerIsAdmin && (
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             <a
               href={`/api/employees/${employee.id}/leave-ledger`}
               className="rounded border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50"
@@ -229,7 +223,7 @@ export default async function EmployeeDetailPage({
             <div className="flex flex-wrap gap-1">
               <Link
                 href={`/employees/${employee.id}`}
-                className={`rounded px-2 py-1 text-xs font-medium ${
+                className={`rounded px-2.5 py-1.5 text-xs font-medium ${
                   selectedYear === null
                     ? "bg-brand-navy text-white"
                     : "border border-gray-300 text-gray-600 hover:bg-gray-50"
@@ -241,7 +235,7 @@ export default async function EmployeeDetailPage({
                 <Link
                   key={year}
                   href={`/employees/${employee.id}?year=${year}`}
-                  className={`rounded px-2 py-1 text-xs font-medium ${
+                  className={`rounded px-2.5 py-1.5 text-xs font-medium ${
                     selectedYear === year
                       ? "bg-brand-navy text-white"
                       : "border border-gray-300 text-gray-600 hover:bg-gray-50"
@@ -258,67 +252,121 @@ export default async function EmployeeDetailPage({
             {selectedYear ? `${selectedYear}年の申請履歴はありません` : "申請履歴はありません"}
           </p>
         ) : (
-          <table className="w-full text-left text-sm">
-            <thead className="border-b border-gray-200 text-gray-500">
-              <tr>
-                <th className="py-2 font-medium">対象日</th>
-                <th className="py-2 font-medium">区分</th>
-                <th className="py-2 font-medium">ステータス</th>
-                <th className="py-2 font-medium">理由</th>
-                <th className="py-2 font-medium">操作</th>
-              </tr>
-            </thead>
-            <tbody>
+          <>
+            <table className="hidden w-full text-left text-sm md:table">
+              <thead className="border-b border-gray-200 text-gray-500">
+                <tr>
+                  <th className="py-2 font-medium">対象日</th>
+                  <th className="py-2 font-medium">区分</th>
+                  <th className="py-2 font-medium">ステータス</th>
+                  <th className="py-2 font-medium">理由</th>
+                  <th className="py-2 font-medium">操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                {visibleRequests.map((request) => (
+                  <tr key={request.id} className="border-b border-gray-100 last:border-0">
+                    <td className="py-2 text-gray-900">
+                      {formatDate(request.targetDate)}
+                      {request.batchId && <span className="ml-1 text-xs text-gray-400">(一括)</span>}
+                    </td>
+                    <td className="py-2 text-gray-700">
+                      {UNIT_LABELS[request.unit]}
+                      {request.unit === "hourly" && request.hours != null ? `(${request.hours}時間)` : ""}
+                    </td>
+                    <td className="py-2">
+                      <span
+                        className={`rounded-full px-2 py-1 text-xs font-medium ${STATUS_BADGE_CLASSES[request.status]}`}
+                      >
+                        {STATUS_LABELS[request.status]}
+                      </span>
+                    </td>
+                    <td className="py-2 text-gray-500">
+                      {request.rejectReason && <p>却下理由: {request.rejectReason}</p>}
+                      {request.cancelReason && <p>取消理由: {request.cancelReason}</p>}
+                      {request.status === "cancelled" && !request.cancelReason && (
+                        <p>
+                          {request.cancelledBy === "system"
+                            ? "退職処理による自動取消"
+                            : "本人による取消"}
+                        </p>
+                      )}
+                    </td>
+                    <td className="py-2">
+                      {request.status === "pending" && viewerIsSelf && (
+                        <CancelRequestButton employeeId={employee.id} requestId={request.id} />
+                      )}
+                      {request.status === "pending" && viewerIsAdmin && !viewerIsSelf && (
+                        <div className="flex gap-2">
+                          <ApproveRequestButton employeeId={employee.id} requestId={request.id} />
+                          <RejectRequestButton employeeId={employee.id} requestId={request.id} />
+                        </div>
+                      )}
+                      {request.status === "approved" &&
+                        viewerIsSelf &&
+                        (isWithinWithdrawalWindow(request.targetDate, asOf) ? (
+                          <WithdrawRequestButton employeeId={employee.id} requestId={request.id} />
+                        ) : (
+                          <p className="text-xs text-gray-400">取得日の3日前を過ぎたため取り下げ不可</p>
+                        ))}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+
+            <div className="space-y-3 md:hidden">
               {visibleRequests.map((request) => (
-                <tr key={request.id} className="border-b border-gray-100 last:border-0">
-                  <td className="py-2 text-gray-900">
-                    {formatDate(request.targetDate)}
-                    {request.batchId && <span className="ml-1 text-xs text-gray-400">(一括)</span>}
-                  </td>
-                  <td className="py-2 text-gray-700">
-                    {UNIT_LABELS[request.unit]}
-                    {request.unit === "hourly" && request.hours != null ? `(${request.hours}時間)` : ""}
-                  </td>
-                  <td className="py-2">
+                <div key={request.id} className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="font-medium text-gray-900">
+                      {formatDate(request.targetDate)}
+                      {request.batchId && <span className="ml-1 text-xs text-gray-400">(一括)</span>}
+                    </p>
                     <span
-                      className={`rounded-full px-2 py-1 text-xs font-medium ${STATUS_BADGE_CLASSES[request.status]}`}
+                      className={`shrink-0 rounded-full px-2 py-1 text-xs font-medium ${STATUS_BADGE_CLASSES[request.status]}`}
                     >
                       {STATUS_LABELS[request.status]}
                     </span>
-                  </td>
-                  <td className="py-2 text-gray-500">
-                    {request.rejectReason && <p>却下理由: {request.rejectReason}</p>}
-                    {request.cancelReason && <p>取消理由: {request.cancelReason}</p>}
-                    {request.status === "cancelled" && !request.cancelReason && (
-                      <p>
-                        {request.cancelledBy === "system"
-                          ? "退職処理による自動取消"
-                          : "本人による取消"}
-                      </p>
-                    )}
-                  </td>
-                  <td className="py-2">
-                    {request.status === "pending" && viewerIsSelf && (
-                      <CancelRequestButton employeeId={employee.id} requestId={request.id} />
-                    )}
-                    {request.status === "pending" && viewerIsAdmin && !viewerIsSelf && (
-                      <div className="flex gap-2">
-                        <ApproveRequestButton employeeId={employee.id} requestId={request.id} />
-                        <RejectRequestButton employeeId={employee.id} requestId={request.id} />
-                      </div>
-                    )}
-                    {request.status === "approved" &&
-                      viewerIsSelf &&
-                      (isWithinWithdrawalWindow(request.targetDate, asOf) ? (
-                        <WithdrawRequestButton employeeId={employee.id} requestId={request.id} />
-                      ) : (
-                        <p className="text-xs text-gray-400">取得日の3日前を過ぎたため取り下げ不可</p>
-                      ))}
-                  </td>
-                </tr>
+                  </div>
+                  <p className="mt-1 text-sm text-gray-700">
+                    {UNIT_LABELS[request.unit]}
+                    {request.unit === "hourly" && request.hours != null ? `(${request.hours}時間)` : ""}
+                  </p>
+                  {(request.rejectReason || request.cancelReason || request.status === "cancelled") && (
+                    <div className="mt-1 text-xs text-gray-500">
+                      {request.rejectReason && <p>却下理由: {request.rejectReason}</p>}
+                      {request.cancelReason && <p>取消理由: {request.cancelReason}</p>}
+                      {request.status === "cancelled" && !request.cancelReason && (
+                        <p>{request.cancelledBy === "system" ? "退職処理による自動取消" : "本人による取消"}</p>
+                      )}
+                    </div>
+                  )}
+                  {((request.status === "pending" && (viewerIsSelf || (viewerIsAdmin && !viewerIsSelf))) ||
+                    (request.status === "approved" && viewerIsSelf)) && (
+                    <div className="mt-3">
+                      {request.status === "pending" && viewerIsSelf && (
+                        <CancelRequestButton employeeId={employee.id} requestId={request.id} />
+                      )}
+                      {request.status === "pending" && viewerIsAdmin && !viewerIsSelf && (
+                        <div className="flex gap-2">
+                          <ApproveRequestButton employeeId={employee.id} requestId={request.id} />
+                          <RejectRequestButton employeeId={employee.id} requestId={request.id} />
+                        </div>
+                      )}
+                      {request.status === "approved" &&
+                        viewerIsSelf &&
+                        (isWithinWithdrawalWindow(request.targetDate, asOf) ? (
+                          <WithdrawRequestButton employeeId={employee.id} requestId={request.id} />
+                        ) : (
+                          <p className="text-xs text-gray-400">取得日の3日前を過ぎたため取り下げ不可</p>
+                        ))}
+                    </div>
+                  )}
+                </div>
               ))}
-            </tbody>
-          </table>
+            </div>
+          </>
         )}
       </section>
 
@@ -327,40 +375,76 @@ export default async function EmployeeDetailPage({
         {employee.grants.length === 0 ? (
           <p className="text-sm text-gray-400">付与履歴はありません</p>
         ) : (
-          <table className="w-full text-left text-sm">
-            <thead className="border-b border-gray-200 text-gray-500">
-              <tr>
-                <th className="py-2 font-medium">付与日</th>
-                <th className="py-2 font-medium">付与日数</th>
-                <th className="py-2 font-medium">残日数</th>
-                <th className="py-2 font-medium">失効予定日</th>
-              </tr>
-            </thead>
-            <tbody>
+          <>
+            <table className="hidden w-full text-left text-sm md:table">
+              <thead className="border-b border-gray-200 text-gray-500">
+                <tr>
+                  <th className="py-2 font-medium">付与日</th>
+                  <th className="py-2 font-medium">付与日数</th>
+                  <th className="py-2 font-medium">残日数</th>
+                  <th className="py-2 font-medium">失効予定日</th>
+                </tr>
+              </thead>
+              <tbody>
+                {employee.grants.map((grant) => {
+                  const expiryStatus = computeGrantExpiryStatus(grant.remainingDays, grant.expireDate, asOf);
+                  return (
+                    <tr key={grant.id} className="border-b border-gray-100 last:border-0">
+                      <td className="py-2 text-gray-900">{formatDate(grant.grantedDate)}</td>
+                      <td className="py-2 text-gray-700">{grant.grantedDays}日</td>
+                      <td className="py-2 text-gray-700">{Math.max(0, grant.remainingDays)}日</td>
+                      <td className="py-2 text-gray-700">
+                        <div className="flex flex-col gap-1">
+                          <span>{formatDate(grant.expireDate)}</span>
+                          {expiryStatus !== "normal" && (
+                            <span
+                              className={`w-fit rounded-full px-2 py-1 text-xs font-medium ${GRANT_EXPIRY_STATUS_BADGE_CLASSES[expiryStatus]}`}
+                            >
+                              {GRANT_EXPIRY_STATUS_LABELS[expiryStatus]}
+                            </span>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+
+            <div className="space-y-3 md:hidden">
               {employee.grants.map((grant) => {
                 const expiryStatus = computeGrantExpiryStatus(grant.remainingDays, grant.expireDate, asOf);
                 return (
-                  <tr key={grant.id} className="border-b border-gray-100 last:border-0">
-                    <td className="py-2 text-gray-900">{formatDate(grant.grantedDate)}</td>
-                    <td className="py-2 text-gray-700">{grant.grantedDays}日</td>
-                    <td className="py-2 text-gray-700">{Math.max(0, grant.remainingDays)}日</td>
-                    <td className="py-2 text-gray-700">
-                      <div className="flex flex-col gap-1">
-                        <span>{formatDate(grant.expireDate)}</span>
-                        {expiryStatus !== "normal" && (
-                          <span
-                            className={`w-fit rounded-full px-2 py-1 text-xs font-medium ${GRANT_EXPIRY_STATUS_BADGE_CLASSES[expiryStatus]}`}
-                          >
-                            {GRANT_EXPIRY_STATUS_LABELS[expiryStatus]}
-                          </span>
-                        )}
+                  <div key={grant.id} className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="font-medium text-gray-900">{formatDate(grant.grantedDate)}付与</p>
+                      {expiryStatus !== "normal" && (
+                        <span
+                          className={`shrink-0 rounded-full px-2 py-1 text-xs font-medium ${GRANT_EXPIRY_STATUS_BADGE_CLASSES[expiryStatus]}`}
+                        >
+                          {GRANT_EXPIRY_STATUS_LABELS[expiryStatus]}
+                        </span>
+                      )}
+                    </div>
+                    <dl className="mt-2 space-y-1 text-sm">
+                      <div className="flex justify-between gap-2">
+                        <dt className="text-gray-500">付与日数</dt>
+                        <dd className="text-gray-700">{grant.grantedDays}日</dd>
                       </div>
-                    </td>
-                  </tr>
+                      <div className="flex justify-between gap-2">
+                        <dt className="text-gray-500">残日数</dt>
+                        <dd className="text-gray-700">{Math.max(0, grant.remainingDays)}日</dd>
+                      </div>
+                      <div className="flex justify-between gap-2">
+                        <dt className="text-gray-500">失効予定日</dt>
+                        <dd className="text-gray-700">{formatDate(grant.expireDate)}</dd>
+                      </div>
+                    </dl>
+                  </div>
                 );
               })}
-            </tbody>
-          </table>
+            </div>
+          </>
         )}
       </section>
 
@@ -374,34 +458,54 @@ export default async function EmployeeDetailPage({
         {specialLeaveRequests.length === 0 ? (
           <p className="text-sm text-gray-400">申請履歴はありません</p>
         ) : (
-          <table className="w-full text-left text-sm">
-            <thead className="border-b border-gray-200 text-gray-500">
-              <tr>
-                <th className="py-2 font-medium">種別</th>
-                <th className="py-2 font-medium">期間</th>
-                <th className="py-2 font-medium">日数</th>
-                <th className="py-2 font-medium">ステータス</th>
-              </tr>
-            </thead>
-            <tbody>
+          <>
+            <table className="hidden w-full text-left text-sm md:table">
+              <thead className="border-b border-gray-200 text-gray-500">
+                <tr>
+                  <th className="py-2 font-medium">種別</th>
+                  <th className="py-2 font-medium">期間</th>
+                  <th className="py-2 font-medium">日数</th>
+                  <th className="py-2 font-medium">ステータス</th>
+                </tr>
+              </thead>
+              <tbody>
+                {specialLeaveRequests.map((request) => (
+                  <tr key={request.id} className="border-b border-gray-100 last:border-0">
+                    <td className="py-2 text-gray-900">{SPECIAL_LEAVE_TYPE_LABELS[request.type]}</td>
+                    <td className="py-2 text-gray-700">
+                      {formatDate(request.startDate)}〜{formatDate(request.endDate)}
+                    </td>
+                    <td className="py-2 text-gray-700">{request.days}日</td>
+                    <td className="py-2">
+                      <span
+                        className={`rounded-full px-2 py-1 text-xs font-medium ${SPECIAL_LEAVE_STATUS_BADGE_CLASSES[request.status]}`}
+                      >
+                        {SPECIAL_LEAVE_STATUS_LABELS[request.status]}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+
+            <div className="space-y-3 md:hidden">
               {specialLeaveRequests.map((request) => (
-                <tr key={request.id} className="border-b border-gray-100 last:border-0">
-                  <td className="py-2 text-gray-900">{SPECIAL_LEAVE_TYPE_LABELS[request.type]}</td>
-                  <td className="py-2 text-gray-700">
-                    {formatDate(request.startDate)}〜{formatDate(request.endDate)}
-                  </td>
-                  <td className="py-2 text-gray-700">{request.days}日</td>
-                  <td className="py-2">
+                <div key={request.id} className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="font-medium text-gray-900">{SPECIAL_LEAVE_TYPE_LABELS[request.type]}</p>
                     <span
-                      className={`rounded-full px-2 py-1 text-xs font-medium ${SPECIAL_LEAVE_STATUS_BADGE_CLASSES[request.status]}`}
+                      className={`shrink-0 rounded-full px-2 py-1 text-xs font-medium ${SPECIAL_LEAVE_STATUS_BADGE_CLASSES[request.status]}`}
                     >
                       {SPECIAL_LEAVE_STATUS_LABELS[request.status]}
                     </span>
-                  </td>
-                </tr>
+                  </div>
+                  <p className="mt-1 text-sm text-gray-700">
+                    {formatDate(request.startDate)}〜{formatDate(request.endDate)}({request.days}日)
+                  </p>
+                </div>
               ))}
-            </tbody>
-          </table>
+            </div>
+          </>
         )}
       </section>
     </div>

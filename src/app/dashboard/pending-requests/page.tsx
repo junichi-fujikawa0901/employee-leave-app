@@ -31,6 +31,7 @@ export default async function PendingRequestsPage() {
       <Link href="/dashboard" className="text-sm text-gray-500 hover:text-gray-700">
         ← ダッシュボードに戻る
       </Link>
+      {/* ダッシュボード配下のサブページのため、グローバルナビに存在しないこのリンクは維持する */}
 
       <div className="w-fit">
         <h1 className="text-2xl font-bold text-gray-900">承認待ち一覧</h1>
@@ -75,52 +76,91 @@ export default async function PendingRequestsPage() {
           )}
 
           {singleRequests.length > 0 && (
-            <section className="overflow-hidden rounded-lg bg-white shadow">
-              <table className="w-full text-left text-sm">
-                <thead className="border-b border-gray-200 bg-gray-50 text-gray-500">
-                  <tr>
-                    <th className="px-4 py-3 font-medium">申請者</th>
-                    <th className="px-4 py-3 font-medium">対象日</th>
-                    <th className="px-4 py-3 font-medium">区分</th>
-                    <th className="px-4 py-3 font-medium">申請日時</th>
-                    <th className="px-4 py-3 font-medium">操作</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {singleRequests.map((request) => (
-                    <tr key={request.id} className="border-b border-gray-100 last:border-0">
-                      <td className="px-4 py-3 text-gray-900">
-                        <Link
-                          href={`/employees/${request.userId}`}
-                          className="text-brand-navy hover:underline"
-                        >
-                          {request.userName}
-                        </Link>
-                      </td>
-                      <td className="px-4 py-3 whitespace-nowrap text-gray-700">
-                        {formatDate(request.targetDate)}
-                      </td>
-                      <td className="px-4 py-3 text-gray-700">
-                        {UNIT_LABELS[request.unit]}
-                        {request.unit === "hourly" && request.hours != null ? `(${request.hours}時間)` : ""}
-                      </td>
-                      <td className="px-4 py-3 whitespace-nowrap text-gray-500">
-                        {formatDateTime(request.requestedAt)}
-                      </td>
-                      <td className="px-4 py-3">
-                        {request.userId === viewerId ? (
-                          <p className="text-xs text-gray-400">自分自身の申請は承認できません</p>
-                        ) : (
-                          <div className="flex gap-2">
-                            <ApprovePendingRequestButton userId={request.userId} requestId={request.id} />
-                            <RejectPendingRequestButton userId={request.userId} requestId={request.id} />
-                          </div>
-                        )}
-                      </td>
+            <section>
+              <div className="hidden overflow-hidden rounded-lg bg-white shadow md:block">
+                <table className="w-full text-left text-sm">
+                  <thead className="border-b border-gray-200 bg-gray-50 text-gray-500">
+                    <tr>
+                      <th className="px-4 py-3 font-medium">申請者</th>
+                      <th className="px-4 py-3 font-medium">対象日</th>
+                      <th className="px-4 py-3 font-medium">区分</th>
+                      <th className="px-4 py-3 font-medium">申請日時</th>
+                      <th className="px-4 py-3 font-medium">操作</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {singleRequests.map((request) => (
+                      <tr key={request.id} className="border-b border-gray-100 last:border-0">
+                        <td className="px-4 py-3 text-gray-900">
+                          <Link
+                            href={`/employees/${request.userId}`}
+                            className="text-brand-navy hover:underline"
+                          >
+                            {request.userName}
+                          </Link>
+                        </td>
+                        <td className="px-4 py-3 whitespace-nowrap text-gray-700">
+                          {formatDate(request.targetDate)}
+                        </td>
+                        <td className="px-4 py-3 text-gray-700">
+                          {UNIT_LABELS[request.unit]}
+                          {request.unit === "hourly" && request.hours != null ? `(${request.hours}時間)` : ""}
+                        </td>
+                        <td className="px-4 py-3 whitespace-nowrap text-gray-500">
+                          {formatDateTime(request.requestedAt)}
+                        </td>
+                        <td className="px-4 py-3">
+                          {request.userId === viewerId ? (
+                            <p className="text-xs text-gray-400">自分自身の申請は承認できません</p>
+                          ) : (
+                            <div className="flex gap-2">
+                              <ApprovePendingRequestButton userId={request.userId} requestId={request.id} />
+                              <RejectPendingRequestButton userId={request.userId} requestId={request.id} />
+                            </div>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              <div className="space-y-3 md:hidden">
+                {singleRequests.map((request) => (
+                  <div key={request.id} className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
+                    <Link href={`/employees/${request.userId}`} className="font-medium text-brand-navy hover:underline">
+                      {request.userName}
+                    </Link>
+                    <dl className="mt-2 space-y-1 text-sm">
+                      <div className="flex justify-between gap-2">
+                        <dt className="text-gray-500">対象日</dt>
+                        <dd className="text-gray-700">{formatDate(request.targetDate)}</dd>
+                      </div>
+                      <div className="flex justify-between gap-2">
+                        <dt className="text-gray-500">区分</dt>
+                        <dd className="text-gray-700">
+                          {UNIT_LABELS[request.unit]}
+                          {request.unit === "hourly" && request.hours != null ? `(${request.hours}時間)` : ""}
+                        </dd>
+                      </div>
+                      <div className="flex justify-between gap-2">
+                        <dt className="text-gray-500">申請日時</dt>
+                        <dd className="text-gray-500">{formatDateTime(request.requestedAt)}</dd>
+                      </div>
+                    </dl>
+                    <div className="mt-3">
+                      {request.userId === viewerId ? (
+                        <p className="text-xs text-gray-400">自分自身の申請は承認できません</p>
+                      ) : (
+                        <div className="flex gap-2">
+                          <ApprovePendingRequestButton userId={request.userId} requestId={request.id} />
+                          <RejectPendingRequestButton userId={request.userId} requestId={request.id} />
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
             </section>
           )}
         </>

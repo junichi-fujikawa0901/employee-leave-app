@@ -115,7 +115,7 @@ export function HolidayCalendar({
                   cell.inCurrentMonth && (!holiday || holiday.type === "company_day_off");
 
                 return (
-                  <td key={key} className="h-20 border border-gray-100 p-1 align-top">
+                  <td key={key} className="h-14 border border-gray-100 p-0.5 align-top sm:h-20 sm:p-1">
                     <button
                       type="button"
                       disabled={!clickable}
@@ -127,7 +127,7 @@ export function HolidayCalendar({
                       <div className={getDateColorClass(cell, holiday)}>{cell.date.getUTCDate()}</div>
                       {holiday && (
                         <span
-                          className={`mt-1 block w-fit rounded-full px-1.5 py-0.5 text-[10px] font-medium ${HOLIDAY_TYPE_BADGE_CLASSES[holiday.type]}`}
+                          className={`mt-1 block w-fit truncate rounded-full px-1.5 py-0.5 text-[9px] font-medium sm:text-[10px] ${HOLIDAY_TYPE_BADGE_CLASSES[holiday.type]}`}
                         >
                           {holiday.name}
                         </span>
@@ -235,7 +235,7 @@ function EditHolidayInline({ holiday, onDone }: { holiday: CalendarHolidayItem; 
         <button
           type="button"
           onClick={() => setConfirmingDelete(true)}
-          className="rounded border border-red-300 px-3 py-1 text-xs font-medium text-red-700"
+          className="rounded border border-red-300 px-3 py-1.5 text-xs font-medium text-red-700"
         >
           削除
         </button>
@@ -245,14 +245,14 @@ function EditHolidayInline({ holiday, onDone }: { holiday: CalendarHolidayItem; 
           <button
             type="submit"
             disabled={isDeletePending}
-            className="rounded bg-red-600 px-3 py-1 text-xs font-medium text-white disabled:opacity-50"
+            className="rounded bg-red-600 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50"
           >
             削除を確定
           </button>
           <button
             type="button"
             onClick={() => setConfirmingDelete(false)}
-            className="rounded border border-gray-300 px-3 py-1 text-xs text-gray-500"
+            className="rounded border border-gray-300 px-3 py-1.5 text-xs text-gray-500"
           >
             やめる
           </button>

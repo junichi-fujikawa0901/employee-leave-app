@@ -1,5 +1,3 @@
-import Link from "next/link";
-
 import type { AuditAction, Prisma } from "@/generated/prisma/client";
 import { AUDIT_ACTION_LABELS } from "@/lib/audit/labels";
 import { AUDIT_LOG_LIST_LIMIT, getAuditableUsers, getAuditLogs, type AuditLogRow } from "@/lib/audit/queries";
@@ -86,10 +84,6 @@ export default async function AuditLogsPage({
 
   return (
     <div className="mx-auto max-w-4xl space-y-6">
-      <Link href="/employees" className="text-sm text-gray-500 hover:text-gray-700">
-        ← 社員一覧に戻る
-      </Link>
-
       <div className="w-fit">
         <h1 className="text-2xl font-bold text-gray-900">監査ログ</h1>
         <span className="mt-2 block h-1 w-full bg-brand-accent" aria-hidden="true" />
@@ -130,7 +124,7 @@ export default async function AuditLogsPage({
             className="rounded border border-gray-300 px-3 py-2 text-sm"
           />
         </div>
-        <div className="space-y-1">
+        <div className="min-w-0 flex-1 space-y-1 sm:flex-none">
           <label htmlFor="targetUserId" className="block text-sm font-medium text-gray-700">
             対象社員
           </label>
@@ -138,7 +132,7 @@ export default async function AuditLogsPage({
             id="targetUserId"
             name="targetUserId"
             defaultValue={targetUserId ?? ""}
-            className="rounded border border-gray-300 px-3 py-2 text-sm"
+            className="w-full max-w-full rounded border border-gray-300 px-3 py-2 text-sm sm:w-auto"
           >
             <option value="">全社員</option>
             {users.map((user) => (
@@ -156,34 +150,68 @@ export default async function AuditLogsPage({
         </button>
       </form>
 
-      <div className="overflow-hidden rounded-lg bg-white shadow">
-        {logs.length === 0 ? (
+      {logs.length === 0 ? (
+        <div className="overflow-hidden rounded-lg bg-white shadow">
           <p className="p-4 text-sm text-gray-400">条件に一致する監査ログはありません</p>
-        ) : (
-          <table className="w-full text-left text-sm">
-            <thead className="border-b border-gray-200 bg-gray-50 text-gray-500">
-              <tr>
-                <th className="px-4 py-3 font-medium">日時</th>
-                <th className="px-4 py-3 font-medium">実行者</th>
-                <th className="px-4 py-3 font-medium">対象社員</th>
-                <th className="px-4 py-3 font-medium">操作</th>
-                <th className="px-4 py-3 font-medium">詳細</th>
-              </tr>
-            </thead>
-            <tbody>
-              {logs.map((log: AuditLogRow) => (
-                <tr key={log.id} className="border-b border-gray-100 last:border-0">
-                  <td className="px-4 py-3 whitespace-nowrap text-gray-900">{formatDateTime(log.createdAt)}</td>
-                  <td className="px-4 py-3 text-gray-700">{log.actorName}</td>
-                  <td className="px-4 py-3 text-gray-700">{log.targetUserName}</td>
-                  <td className="px-4 py-3 text-gray-700">{AUDIT_ACTION_LABELS[log.action]}</td>
-                  <td className="px-4 py-3 text-gray-500">{formatDetail(log.action, log.detail)}</td>
+        </div>
+      ) : (
+        <>
+          <div className="hidden overflow-hidden rounded-lg bg-white shadow md:block">
+            <table className="w-full text-left text-sm">
+              <thead className="border-b border-gray-200 bg-gray-50 text-gray-500">
+                <tr>
+                  <th className="px-4 py-3 font-medium">日時</th>
+                  <th className="px-4 py-3 font-medium">実行者</th>
+                  <th className="px-4 py-3 font-medium">対象社員</th>
+                  <th className="px-4 py-3 font-medium">操作</th>
+                  <th className="px-4 py-3 font-medium">詳細</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </div>
+              </thead>
+              <tbody>
+                {logs.map((log: AuditLogRow) => (
+                  <tr key={log.id} className="border-b border-gray-100 last:border-0">
+                    <td className="px-4 py-3 whitespace-nowrap text-gray-900">{formatDateTime(log.createdAt)}</td>
+                    <td className="px-4 py-3 text-gray-700">{log.actorName}</td>
+                    <td className="px-4 py-3 text-gray-700">{log.targetUserName}</td>
+                    <td className="px-4 py-3 text-gray-700">{AUDIT_ACTION_LABELS[log.action]}</td>
+                    <td className="px-4 py-3 text-gray-500">{formatDetail(log.action, log.detail)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="space-y-3 md:hidden">
+            {logs.map((log: AuditLogRow) => {
+              const detail = formatDetail(log.action, log.detail);
+              return (
+                <div key={log.id} className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="font-medium text-gray-900">{AUDIT_ACTION_LABELS[log.action]}</p>
+                    <span className="shrink-0 text-xs text-gray-500">{formatDateTime(log.createdAt)}</span>
+                  </div>
+                  <dl className="mt-2 space-y-1 text-sm">
+                    <div className="flex justify-between gap-2">
+                      <dt className="text-gray-500">実行者</dt>
+                      <dd className="text-gray-700">{log.actorName}</dd>
+                    </div>
+                    <div className="flex justify-between gap-2">
+                      <dt className="text-gray-500">対象社員</dt>
+                      <dd className="text-gray-700">{log.targetUserName}</dd>
+                    </div>
+                    {detail && (
+                      <div>
+                        <dt className="text-gray-500">詳細</dt>
+                        <dd className="mt-0.5 text-gray-500">{detail}</dd>
+                      </div>
+                    )}
+                  </dl>
+                </div>
+              );
+            })}
+          </div>
+        </>
+      )}
     </div>
   );
 }

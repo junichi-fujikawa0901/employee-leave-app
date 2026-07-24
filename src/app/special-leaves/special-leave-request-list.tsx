@@ -24,7 +24,7 @@ function CancelButton({ requestId }: { requestId: string }) {
       <button
         type="button"
         onClick={() => setShowReason(true)}
-        className="rounded border border-gray-300 px-3 py-1 text-xs font-medium text-gray-700"
+        className="rounded border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700"
       >
         取消
       </button>
@@ -36,20 +36,20 @@ function CancelButton({ requestId }: { requestId: string }) {
       <input
         name="reason"
         placeholder="取消理由(任意)"
-        className="w-full rounded border border-gray-300 px-2 py-1 text-xs"
+        className="w-full rounded border border-gray-300 px-2 py-1.5 text-xs"
       />
       <div className="flex gap-2">
         <button
           type="submit"
           disabled={isPending}
-          className="rounded bg-brand-navy px-3 py-1 text-xs font-medium text-white transition-colors hover:bg-brand-navy-light disabled:opacity-50"
+          className="rounded bg-brand-navy px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-brand-navy-light disabled:opacity-50"
         >
           取消を確定
         </button>
         <button
           type="button"
           onClick={() => setShowReason(false)}
-          className="rounded border border-gray-300 px-3 py-1 text-xs text-gray-500"
+          className="rounded border border-gray-300 px-3 py-1.5 text-xs text-gray-500"
         >
           やめる
         </button>
@@ -67,43 +67,74 @@ export function SpecialLeaveRequestList({ items }: { items: SpecialLeaveRequestI
       {items.length === 0 ? (
         <p className="p-6 text-sm text-gray-400">申請履歴はありません</p>
       ) : (
-        <table className="w-full text-left text-sm">
-          <thead className="border-b border-gray-200 bg-gray-50 text-gray-500">
-            <tr>
-              <th className="px-4 py-3 font-medium">種別</th>
-              <th className="px-4 py-3 font-medium">期間</th>
-              <th className="px-4 py-3 font-medium">日数</th>
-              <th className="px-4 py-3 font-medium">ステータス</th>
-              <th className="px-4 py-3 font-medium">理由</th>
-              <th className="px-4 py-3 font-medium">操作</th>
-            </tr>
-          </thead>
-          <tbody>
+        <>
+          <table className="hidden w-full text-left text-sm md:table">
+            <thead className="border-b border-gray-200 bg-gray-50 text-gray-500">
+              <tr>
+                <th className="px-4 py-3 font-medium">種別</th>
+                <th className="px-4 py-3 font-medium">期間</th>
+                <th className="px-4 py-3 font-medium">日数</th>
+                <th className="px-4 py-3 font-medium">ステータス</th>
+                <th className="px-4 py-3 font-medium">理由</th>
+                <th className="px-4 py-3 font-medium">操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              {items.map((item) => (
+                <tr key={item.id} className="border-b border-gray-100 last:border-0">
+                  <td className="px-4 py-3 text-gray-900">{SPECIAL_LEAVE_TYPE_LABELS[item.type]}</td>
+                  <td className="px-4 py-3 whitespace-nowrap text-gray-700">
+                    {formatDate(item.startDate)}〜{formatDate(item.endDate)}
+                  </td>
+                  <td className="px-4 py-3 text-gray-700">{item.days}日</td>
+                  <td className="px-4 py-3">
+                    <span
+                      className={`rounded-full px-2 py-1 text-xs font-medium ${SPECIAL_LEAVE_STATUS_BADGE_CLASSES[item.status]}`}
+                    >
+                      {SPECIAL_LEAVE_STATUS_LABELS[item.status]}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3 text-gray-500">
+                    {item.rejectReason && <p>却下理由: {item.rejectReason}</p>}
+                    {item.cancelReason && <p>取消理由: {item.cancelReason}</p>}
+                  </td>
+                  <td className="px-4 py-3">
+                    {item.status === "pending" && <CancelButton requestId={item.id} />}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+
+          <div className="space-y-3 p-6 pt-0 md:hidden">
             {items.map((item) => (
-              <tr key={item.id} className="border-b border-gray-100 last:border-0">
-                <td className="px-4 py-3 text-gray-900">{SPECIAL_LEAVE_TYPE_LABELS[item.type]}</td>
-                <td className="px-4 py-3 whitespace-nowrap text-gray-700">
-                  {formatDate(item.startDate)}〜{formatDate(item.endDate)}
-                </td>
-                <td className="px-4 py-3 text-gray-700">{item.days}日</td>
-                <td className="px-4 py-3">
+              <div key={item.id} className="rounded-lg border border-gray-200 p-4">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="font-medium text-gray-900">{SPECIAL_LEAVE_TYPE_LABELS[item.type]}</p>
                   <span
-                    className={`rounded-full px-2 py-1 text-xs font-medium ${SPECIAL_LEAVE_STATUS_BADGE_CLASSES[item.status]}`}
+                    className={`shrink-0 rounded-full px-2 py-1 text-xs font-medium ${SPECIAL_LEAVE_STATUS_BADGE_CLASSES[item.status]}`}
                   >
                     {SPECIAL_LEAVE_STATUS_LABELS[item.status]}
                   </span>
-                </td>
-                <td className="px-4 py-3 text-gray-500">
-                  {item.rejectReason && <p>却下理由: {item.rejectReason}</p>}
-                  {item.cancelReason && <p>取消理由: {item.cancelReason}</p>}
-                </td>
-                <td className="px-4 py-3">
-                  {item.status === "pending" && <CancelButton requestId={item.id} />}
-                </td>
-              </tr>
+                </div>
+                <p className="mt-1 text-sm text-gray-700">
+                  {formatDate(item.startDate)}〜{formatDate(item.endDate)}({item.days}日)
+                </p>
+                {(item.rejectReason || item.cancelReason) && (
+                  <div className="mt-1 text-xs text-gray-500">
+                    {item.rejectReason && <p>却下理由: {item.rejectReason}</p>}
+                    {item.cancelReason && <p>取消理由: {item.cancelReason}</p>}
+                  </div>
+                )}
+                {item.status === "pending" && (
+                  <div className="mt-3">
+                    <CancelButton requestId={item.id} />
+                  </div>
+                )}
+              </div>
             ))}
-          </tbody>
-        </table>
+          </div>
+        </>
       )}
     </section>
   );

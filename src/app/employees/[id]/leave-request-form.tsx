@@ -32,7 +32,7 @@ export function LeaveRequestForm({
           <button
             type="button"
             onClick={() => setMode("single")}
-            className={`rounded px-2 py-1 font-medium ${
+            className={`rounded px-2 py-1.5 font-medium ${
               mode === "single" ? "bg-brand-navy text-white" : "border border-gray-300 text-gray-600"
             }`}
           >
@@ -41,7 +41,7 @@ export function LeaveRequestForm({
           <button
             type="button"
             onClick={() => setMode("batch")}
-            className={`rounded px-2 py-1 font-medium ${
+            className={`rounded px-2 py-1.5 font-medium ${
               mode === "batch" ? "bg-brand-navy text-white" : "border border-gray-300 text-gray-600"
             }`}
           >

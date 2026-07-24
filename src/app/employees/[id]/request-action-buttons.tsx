@@ -28,7 +28,7 @@ export function CancelRequestButton({
       <button
         type="button"
         onClick={() => setShowReason(true)}
-        className="rounded border border-gray-300 px-3 py-1 text-xs font-medium text-gray-700"
+        className="rounded border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700"
       >
         取消
       </button>
@@ -40,20 +40,20 @@ export function CancelRequestButton({
       <input
         name="reason"
         placeholder="取消理由(任意)"
-        className="w-full rounded border border-gray-300 px-2 py-1 text-xs"
+        className="w-full rounded border border-gray-300 px-2 py-1.5 text-xs"
       />
       <div className="flex gap-2">
         <button
           type="submit"
           disabled={isPending}
-          className="rounded bg-brand-navy px-3 py-1 text-xs font-medium text-white transition-colors hover:bg-brand-navy-light disabled:opacity-50"
+          className="rounded bg-brand-navy px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-brand-navy-light disabled:opacity-50"
         >
           取消を確定
         </button>
         <button
           type="button"
           onClick={() => setShowReason(false)}
-          className="rounded border border-gray-300 px-3 py-1 text-xs text-gray-500"
+          className="rounded border border-gray-300 px-3 py-1.5 text-xs text-gray-500"
         >
           やめる
         </button>
@@ -79,7 +79,7 @@ export function WithdrawRequestButton({
       <button
         type="button"
         onClick={() => setShowReason(true)}
-        className="rounded border border-gray-300 px-3 py-1 text-xs font-medium text-gray-700"
+        className="rounded border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700"
       >
         取り下げ
       </button>
@@ -91,20 +91,20 @@ export function WithdrawRequestButton({
       <input
         name="reason"
         placeholder="取り下げ理由(任意)"
-        className="w-full rounded border border-gray-300 px-2 py-1 text-xs"
+        className="w-full rounded border border-gray-300 px-2 py-1.5 text-xs"
       />
       <div className="flex gap-2">
         <button
           type="submit"
           disabled={isPending}
-          className="rounded bg-brand-navy px-3 py-1 text-xs font-medium text-white transition-colors hover:bg-brand-navy-light disabled:opacity-50"
+          className="rounded bg-brand-navy px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-brand-navy-light disabled:opacity-50"
         >
           取り下げを確定
         </button>
         <button
           type="button"
           onClick={() => setShowReason(false)}
-          className="rounded border border-gray-300 px-3 py-1 text-xs text-gray-500"
+          className="rounded border border-gray-300 px-3 py-1.5 text-xs text-gray-500"
         >
           やめる
         </button>
@@ -129,7 +129,7 @@ export function ApproveRequestButton({
       <button
         type="submit"
         disabled={isPending}
-        className="rounded bg-green-600 px-3 py-1 text-xs font-medium text-white disabled:opacity-50"
+        className="rounded bg-green-600 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50"
       >
         承認
       </button>
@@ -154,7 +154,7 @@ export function RejectRequestButton({
       <button
         type="button"
         onClick={() => setShowReason(true)}
-        className="rounded border border-red-300 px-3 py-1 text-xs font-medium text-red-700"
+        className="rounded border border-red-300 px-3 py-1.5 text-xs font-medium text-red-700"
       >
         却下
       </button>
@@ -166,20 +166,20 @@ export function RejectRequestButton({
       <input
         name="reason"
         placeholder="却下理由(任意)"
-        className="w-full rounded border border-gray-300 px-2 py-1 text-xs"
+        className="w-full rounded border border-gray-300 px-2 py-1.5 text-xs"
       />
       <div className="flex gap-2">
         <button
           type="submit"
           disabled={isPending}
-          className="rounded bg-red-600 px-3 py-1 text-xs font-medium text-white disabled:opacity-50"
+          className="rounded bg-red-600 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50"
         >
           却下を確定
         </button>
         <button
           type="button"
           onClick={() => setShowReason(false)}
-          className="rounded border border-gray-300 px-3 py-1 text-xs text-gray-500"
+          className="rounded border border-gray-300 px-3 py-1.5 text-xs text-gray-500"
         >
           やめる
         </button>

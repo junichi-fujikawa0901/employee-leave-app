@@ -27,7 +27,7 @@ export function ApprovePendingRequestButton({
       <button
         type="submit"
         disabled={isPending}
-        className="rounded bg-green-600 px-3 py-1 text-xs font-medium text-white disabled:opacity-50"
+        className="rounded bg-green-600 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50"
       >
         承認
       </button>
@@ -52,7 +52,7 @@ export function RejectPendingRequestButton({
       <button
         type="button"
         onClick={() => setShowReason(true)}
-        className="rounded border border-red-300 px-3 py-1 text-xs font-medium text-red-700"
+        className="rounded border border-red-300 px-3 py-1.5 text-xs font-medium text-red-700"
       >
         却下
       </button>
@@ -64,20 +64,20 @@ export function RejectPendingRequestButton({
       <input
         name="reason"
         placeholder="却下理由(任意)"
-        className="w-full rounded border border-gray-300 px-2 py-1 text-xs"
+        className="w-full rounded border border-gray-300 px-2 py-1.5 text-xs"
       />
       <div className="flex gap-2">
         <button
           type="submit"
           disabled={isPending}
-          className="rounded bg-red-600 px-3 py-1 text-xs font-medium text-white disabled:opacity-50"
+          className="rounded bg-red-600 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50"
         >
           却下を確定
         </button>
         <button
           type="button"
           onClick={() => setShowReason(false)}
-          className="rounded border border-gray-300 px-3 py-1 text-xs text-gray-500"
+          className="rounded border border-gray-300 px-3 py-1.5 text-xs text-gray-500"
         >
           やめる
         </button>
@@ -102,7 +102,7 @@ export function ApprovePendingRequestBatchButton({
       <button
         type="submit"
         disabled={isPending}
-        className="rounded bg-green-600 px-3 py-1 text-xs font-medium text-white disabled:opacity-50"
+        className="rounded bg-green-600 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50"
       >
         まとめて承認
       </button>
@@ -128,7 +128,7 @@ export function RejectPendingRequestBatchButton({
       <button
         type="button"
         onClick={() => setShowReason(true)}
-        className="rounded border border-red-300 px-3 py-1 text-xs font-medium text-red-700"
+        className="rounded border border-red-300 px-3 py-1.5 text-xs font-medium text-red-700"
       >
         まとめて却下
       </button>
@@ -140,20 +140,20 @@ export function RejectPendingRequestBatchButton({
       <input
         name="reason"
         placeholder="却下理由(任意)"
-        className="w-full rounded border border-gray-300 px-2 py-1 text-xs"
+        className="w-full rounded border border-gray-300 px-2 py-1.5 text-xs"
       />
       <div className="flex gap-2">
         <button
           type="submit"
           disabled={isPending}
-          className="rounded bg-red-600 px-3 py-1 text-xs font-medium text-white disabled:opacity-50"
+          className="rounded bg-red-600 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50"
         >
           まとめて却下を確定
         </button>
         <button
           type="button"
           onClick={() => setShowReason(false)}
-          className="rounded border border-gray-300 px-3 py-1 text-xs text-gray-500"
+          className="rounded border border-gray-300 px-3 py-1.5 text-xs text-gray-500"
         >
           やめる
         </button>
